@@ -1,0 +1,22 @@
+version: v1
+name: buf.build/truther/contracts
+deps:
+  - buf.build/bufbuild/protovalidate
+lint:
+  use:
+    - DEFAULT
+  except:
+    # Existing fields use camelCase (isAllowed, cardId, etc.) — tracked for migration in ROD-14.
+    # All NEW fields must use snake_case per the versioning policy.
+    - FIELD_LOWER_SNAKE_CASE
+    # We don't suffix packages with a version number (v1, v2) until the first breaking change.
+    - PACKAGE_VERSION_SUFFIX
+    # transaction.proto lives at proto/ (root), not proto/truther/transaction/. A directory
+    # reorg is deferred (it would move gen/ paths and break ROD-15/16/17). Re-enable
+    # PACKAGE_DIRECTORY_MATCH when the reorg is done in a coordinated migration.
+    - PACKAGE_DIRECTORY_MATCH
+  enum_zero_value_suffix: _UNSPECIFIED
+breaking:
+  use:
+    - FILE
+  ignore_unstable_packages: false

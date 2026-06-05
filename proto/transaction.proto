@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package truther.transaction;
+
 option go_package = "github.com/vinirmbrozz/truther-contracts/gen/go/transaction";
 
 message PredictiveAnalyzer {

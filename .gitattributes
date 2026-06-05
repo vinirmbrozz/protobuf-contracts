@@ -1,0 +1,2 @@
+# Protobuf must use LF line endings (buf format enforces LF).
+*.proto text eol=lf
