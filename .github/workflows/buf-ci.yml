@@ -43,6 +43,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # buf breaking --against .git#branch=main clona o .git LOCAL e procura o branch `main`.
+      # No checkout de PR, `main` só existe como remote-tracking — criamos o ref local aqui.
+      - name: Ensure local main ref for breaking check
+        run: git fetch origin main:main
+
       - uses: bufbuild/buf-action@v1
         with:
           version: '1.47.2'
