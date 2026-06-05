@@ -95,14 +95,14 @@ func ParseFrame(data []byte) (schemaID int32, msgBytes []byte, err error) {
 | **TopicNameStrategy** | `<topic-name>-value` | `transactions-value` |
 | **RecordNameStrategy** | `<package>.<MessageName>` | `truther.transaction.Transaction` |
 
-### 3.2 Recommended: TopicNameStrategy
+### 3.2 Confirmed: TopicNameStrategy
 
-Until a decision is made, implementations MUST use **TopicNameStrategy** (`<topic>-value`). This
-keeps the Schema Registry subject tied to the Kafka topic, making it easy to reason about which
-schema governs which topic.
+Implementations MUST use **TopicNameStrategy** (`<topic>-value`). This keeps the Schema Registry
+subject tied to the Kafka topic, making it easy to reason about which schema governs which topic.
+Confirmed by CTO/founder on 2026-06-05 (see §8).
 
-RecordNameStrategy is useful when the same message type is produced to multiple topics — defer to
-CTO to decide if/when that pattern applies.
+RecordNameStrategy would only apply if the same message type is produced to multiple topics.
+That pattern is not in scope now; any future change requires a new CTO decision.
 
 ---
 
@@ -183,7 +183,7 @@ Standard rules for Truther messages:
 - Amount fields (`transaction_amount`) — `string.pattern: "^[0-9]+(\\.[0-9]{1,8})?$"`
 - Boolean decision fields — no special rule, default false is valid
 
-Example proto annotation (to add after CTO confirms buf dependency):
+Example proto annotation (add to proto when protovalidate buf plugin is wired in CI):
 ```protobuf
 import "buf/validate/validate.proto";
 
@@ -226,33 +226,55 @@ Credentials (if any) from `SCHEMA_REGISTRY_API_KEY` and `SCHEMA_REGISTRY_API_SEC
 
 ---
 
-## 8. Pending Decisions (awaiting CTO approval)
+## 8. Confirmed Decisions (resolved 2026-06-05 by CTO/founder via [ROD-14](/ROD/issues/ROD-14))
 
-These decisions are **not yet made**. Implementations MUST NOT assume any of these until they are
-resolved via an interaction on [ROD-14](/ROD/issues/ROD-14):
+| # | Decision | **Resolution** |
+|---|---|---|
+| D1 | **Kafka client per language** | **Confluent official**: confluent-kafka-go + kafkajs + confluent-kafka-python |
+| D2 | **Schema Registry location** | **docker-compose** for local dev + **self-hosted** Confluent Schema Registry for prod |
+| D3 | **Subject naming strategy** | **TopicNameStrategy**: `<topic>-value` |
 
-| # | Decision | Option A | Option B | Recommendation |
-|---|---|---|---|---|
-| D1 | **Kafka client per language** | confluent-kafka-go / kafkajs / confluent-kafka-python | sarama (Go) / node-rdkafka / aiokafka | Use official Confluent clients: they ship native SR + serde integration |
-| D2 | **Schema Registry location** | docker-compose local for dev | Confluent Cloud managed / self-hosted in prod | docker-compose for dev; managed for prod |
-| D3 | **Subject naming strategy** | TopicNameStrategy (`<topic>-value`) | RecordNameStrategy (`pkg.MessageName`) | TopicNameStrategy (simpler, one schema per topic) |
+These decisions are now final. Language seniors MUST use the Confluent clients listed in D1 and
+MUST NOT introduce other Kafka clients without a new CTO-approved decision.
 
-Until D3 is resolved, use **TopicNameStrategy** as the default (see §3.2).
+### 8.1 Local dev Schema Registry (docker-compose)
+
+See [`docker-compose.yml`](../docker-compose.yml) in the repo root. Start with:
+
+```bash
+docker-compose up -d schema-registry
+# Schema Registry available at http://localhost:8081
+```
+
+Set `SCHEMA_REGISTRY_URL=http://localhost:8081` in your local `.env`.
+
+### 8.2 Production Schema Registry
+
+Self-hosted Confluent Schema Registry deployment details are owned by the infrastructure team.
+The per-language Kafka libs MUST read `SCHEMA_REGISTRY_URL`, `SCHEMA_REGISTRY_API_KEY`, and
+`SCHEMA_REGISTRY_API_SECRET` from environment variables so that the same code works against
+both local and production registries without changes.
 
 ---
 
 ## 9. Typed API Contract
 
-Language seniors MUST implement the following interface contract:
+Language seniors MUST implement the following interface contract using the Confluent client
+libraries confirmed in §8 (D1).
+
+**Client libraries:**
+- Go: `github.com/confluentinc/confluent-kafka-go/kafka` + `github.com/confluentinc/confluent-kafka-go/schemaregistry`
+- Node/TS: `kafkajs` + `@confluentinc/schemaregistry`  
+- Python: `confluent-kafka` (includes `confluent_kafka.schema_registry`)
 
 ```
 Producer<M extends KnownMessage>:
   - produce(topic: string, msg: M): void
-  - Internally: frame with Confluent envelope, register schema on startup
+  - Internally: register schema at startup, frame with Confluent envelope (§2), publish
 
 Consumer<M extends KnownMessage>:
   - subscribe(topic: string, handler: (msg: M) => void): void
-  - Internally: validate magic byte, resolve schema_id, deserialize, validate
+  - Internally: validate magic byte, resolve schema_id via SR cache, deserialize, validate
 
 DLQ routing:
   - Any rejection goes to: <topic>-dead-letter
