@@ -297,3 +297,37 @@ See [`interop/harness.js`](../interop/harness.js) for a Node.js reference implem
 The harness is executable today without Kafka or Schema Registry (uses mock schema_id = 1).
 Cross-language equivalents in [`interop/go/`](../interop/go/) and [`interop/python/`](../interop/python/)
 will pass once the per-language Kafka libs exist.
+
+---
+
+## 11. Security Model
+
+The Confluent envelope (§2) is a **governance and correctness** mechanism — **not** an
+authentication or authorization mechanism. The wire format is the public Confluent standard:
+the magic byte is always `0x00` and the schema-ID layout is well known, so anyone who knows the
+format can craft a structurally valid envelope. Do **not** mistake it for access control.
+
+### 11.1 What the envelope guarantees
+- The value references a schema **registered in our Schema Registry** (`schema_id`).
+- The payload **decodes** into a known generated type and **passes** protovalidate (§6).
+- This stops accidental garbage, schema drift, malformed data, and unknown/unversioned schemas.
+
+### 11.2 What the envelope does NOT guarantee
+- It does **not** authenticate the producer or authorize the consumer. The magic byte (`0x00`)
+  and `schema_id` are public, not secrets — a client with Kafka write access can forge a valid
+  envelope.
+
+### 11.3 Where security actually lives (separate, complementary layer)
+| Concern | Mechanism |
+|---|---|
+| Client authentication | Kafka **SASL/SCRAM** or **mTLS** |
+| Authorization (who produces/consumes which topic) | Kafka **ACLs** |
+| Schema Registry access | Private + authenticated SR (`SCHEMA_REGISTRY_API_KEY`/`SECRET`, §7.3) |
+| Exposure | Network isolation — Kafka and SR not publicly reachable |
+
+### 11.4 Rule
+**Do not** replace the standard wire format with a "secret" format hoping to gain security: it
+would break interop with the Confluent ecosystem and give only a *false* sense of protection.
+Security is the auth/ACL layer; the envelope is the structure contract. They are complementary,
+not substitutes. (Analogy: the Postgres port `5432` being well known does not protect the
+database — passwords, auth and network do. Same here.)
