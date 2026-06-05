@@ -1,0 +1,40 @@
+{
+  "name": "@truther/kafka-serde",
+  "version": "1.0.0",
+  "description": "Confluent Schema Registry serde lib for Truther Kafka messages (KafkaJS + Confluent SR)",
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "jest --testPathPattern='unit'",
+    "test:unit": "jest --testPathPattern='unit'",
+    "test:integration": "jest --testPathPattern='integration' --testTimeout=60000",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "truther",
+    "kafka",
+    "serde",
+    "confluent",
+    "schema-registry",
+    "protobuf"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.19.41",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.11",
+    "typescript": "^5.9.3"
+  }
+}
