@@ -22,9 +22,9 @@ Every Kafka message value produced or consumed by a Truther service uses the **C
 
 ```
 ┌─────────────┬─────────────────────────────┬──────────────────────┬─────────────────────────────┐
-│  Magic Byte │        Schema ID             │   Message Index      │     Protobuf Payload        │
-│   1 byte    │        4 bytes               │   1–N bytes          │     variable length         │
-│   0x00      │   big-endian int32           │   varint array       │   proto3 binary encoding    │
+│  Magic Byte │        Schema ID            │   Message Index      │     Protobuf Payload        │
+│   1 byte    │        4 bytes              │   1–N bytes          │     variable length         │
+│   0x00      │   big-endian int32          │   varint array       │   proto3 binary encoding    │
 └─────────────┴─────────────────────────────┴──────────────────────┴─────────────────────────────┘
 ```
 
