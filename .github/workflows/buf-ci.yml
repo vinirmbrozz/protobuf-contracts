@@ -1,0 +1,106 @@
+name: buf CI — lint, breaking, validate, interop
+
+on:
+  push:
+    paths:
+      - 'proto/**'
+      - 'buf.yaml'
+      - 'buf.gen.yaml'
+      - 'interop/**'
+  pull_request:
+    paths:
+      - 'proto/**'
+      - 'buf.yaml'
+      - 'buf.gen.yaml'
+      - 'interop/**'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. buf lint — style and naming conventions
+  # ---------------------------------------------------------------------------
+  buf-lint:
+    name: buf lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bufbuild/buf-action@v1
+        with:
+          version: '1.47.2'
+          push: false
+          lint: true
+          breaking: false
+
+  # ---------------------------------------------------------------------------
+  # 2. buf breaking — backward compatibility against main branch
+  # ---------------------------------------------------------------------------
+  buf-breaking:
+    name: buf breaking
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: bufbuild/buf-action@v1
+        with:
+          version: '1.47.2'
+          push: false
+          lint: false
+          breaking: true
+          breaking_against: '.git#branch=main'
+
+  # ---------------------------------------------------------------------------
+  # 3. Node.js interop harness — runs today without Kafka or Schema Registry
+  # ---------------------------------------------------------------------------
+  interop-node:
+    name: interop harness (Node.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Node.js interop harness
+        run: node interop/harness.js
+
+  # ---------------------------------------------------------------------------
+  # 4. Go framing unit tests
+  # ---------------------------------------------------------------------------
+  interop-go:
+    name: interop framing tests (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Run Go interop tests
+        run: go test ./interop/go/...
+
+  # ---------------------------------------------------------------------------
+  # 5. Python framing unit tests
+  # ---------------------------------------------------------------------------
+  interop-python:
+    name: interop framing tests (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Run Python interop tests
+        run: python -m pytest interop/python/test_interop.py -v

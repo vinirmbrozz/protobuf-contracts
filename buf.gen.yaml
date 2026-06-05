@@ -1,18 +1,32 @@
 version: v1
+
+# Local plugins are used so CI doesn't require BSR authentication.
+# To switch to BSR-hosted remote plugins, replace each `name:` entry with
+# the corresponding `remote: buf.build/...` plugin and remove the local
+# install steps from CI workflows.
 plugins:
-  # Reflete o --js_out
+  # Go — requires: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+  - name: go
+    out: gen/go
+    opt:
+      - paths=source_relative
+
+  # TypeScript (ts-proto) — requires: npm install ts-proto (provides protoc-gen-ts_proto)
+  - name: ts_proto
+    path: node_modules/ts-proto/protoc-gen-ts_proto
+    out: gen/typescript
+    opt:
+      - esModuleInterop=true
+      - outputServices=false
+      - oneof=unions
+
+  # Node.js CommonJS — requires protoc-gen-js on PATH (from google-protobuf npm package)
   - name: js
     out: gen/node
     opt:
       - import_style=commonjs
       - binary
 
-  # Reflete o --go_out
-  - name: go
-    out: gen/go
-    opt:
-      - paths=source_relative
-
-  # Reflete o --python_out
+  # Python — built-in protoc plugin (no extra install needed)
   - name: python
     out: gen/python
