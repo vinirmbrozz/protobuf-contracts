@@ -13,7 +13,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11transaction.proto\x12\x13truther.transaction\"\x98\x01\n\x12PredictiveAnalyzer\x12\x11\n\tisAllowed\x18\x01 \x01(\x08\x12\x0e\n\x06reason\x18\x02 \x01(\t\x12\x0e\n\x06\x63\x61rdId\x18\x03 \x01(\t\x12\x0e\n\x06userId\x18\x04 \x01(\t\x12\x15\n\rwalletAddress\x18\x05 \x01(\t\x12\x11\n\tallowance\x18\x06 \x01(\t\x12\x15\n\rtransactionId\x18\x07 \x01(\t\"\x85\x01\n\x0bTransaction\x12\x19\n\x11transactionAmount\x18\x01 \x01(\t\x12\x43\n\x12predictiveAnalyzer\x18\x02 \x01(\x0b\x32\'.truther.transaction.PredictiveAnalyzer\x12\x16\n\x0e\x66inal_decision\x18\x03 \x01(\tB=Z;github.com/vinirmbrozz/truther-contracts/gen/go/transactionb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11transaction.proto\x12\x13truther.transaction\"\xa6\x01\n\x12PredictiveAnalyzer\x12\x11\n\tisAllowed\x18\x01 \x01(\x08\x12\x0e\n\x06reason\x18\x02 \x01(\t\x12\x0e\n\x06\x63\x61rdId\x18\x03 \x01(\t\x12\x0e\n\x06userId\x18\x04 \x01(\t\x12\x15\n\rwalletAddress\x18\x05 \x01(\t\x12\x11\n\tallowance\x18\x06 \x01(\t\x12\x15\n\rtransactionId\x18\x07 \x01(\t\x12\x0c\n\x04name\x18\x08 \x01(\t\"\x85\x01\n\x0bTransaction\x12\x19\n\x11transactionAmount\x18\x01 \x01(\t\x12\x43\n\x12predictiveAnalyzer\x18\x02 \x01(\x0b\x32\'.truther.transaction.PredictiveAnalyzer\x12\x16\n\x0e\x66inal_decision\x18\x03 \x01(\tB=Z;github.com/vinirmbrozz/truther-contracts/gen/go/transactionb\x06proto3')
 
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, globals())
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'transaction_pb2', globals())
@@ -22,7 +22,7 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'Z;github.com/vinirmbrozz/truther-contracts/gen/go/transaction'
   _PREDICTIVEANALYZER._serialized_start=43
-  _PREDICTIVEANALYZER._serialized_end=195
-  _TRANSACTION._serialized_start=198
-  _TRANSACTION._serialized_end=331
+  _PREDICTIVEANALYZER._serialized_end=209
+  _TRANSACTION._serialized_start=212
+  _TRANSACTION._serialized_end=345
 # @@protoc_insertion_point(module_scope)
