@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/vinirmbrozz/truther-contracts/serde"
+	"github.com/vinirmbrozz/truther-contracts/sdk/go"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
