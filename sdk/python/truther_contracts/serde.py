@@ -5,7 +5,7 @@ Wire format (§2 of docs/confluent-sr-serde-spec.md):
   [0x00][schema_id: 4 bytes big-endian][0x00][protobuf payload]
 
 Usage:
-  from truther_contracts_sdk.serde import KafkaSerde
+  from truther_contracts.serde import KafkaSerde
   serde = KafkaSerde()
   await serde.startup({"transactions": Transaction})
   framed = serde.produce("transactions", tx_message)
