@@ -1,5 +1,8 @@
 version: v1
 name: buf.build/truther/contracts
+build:
+  excludes:
+    - node_modules
 deps:
   - buf.build/bufbuild/protovalidate
 lint:

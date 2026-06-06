@@ -2,7 +2,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 
 // Importa o arquivo gerado pelo protoc
-const messages = require('./gen/node/transaction_pb.js');
+const messages = require('./gen/node/proto/transaction_pb.js');
 
 // Exporta as classes
 export const {
