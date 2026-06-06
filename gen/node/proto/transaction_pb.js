@@ -1,4 +1,4 @@
-// source: transaction.proto
+// source: proto/transaction.proto
 /**
  * @fileoverview
  * @enhanceable
@@ -34,7 +34,7 @@ goog.exportSymbol('proto.truther.transaction.Transaction', null, global);
  * @constructor
  */
 proto.truther.transaction.PredictiveAnalyzer = function(opt_data) {
-  jspb.Message.initialize(this, opt_data, 0, 500, null, null);
+  jspb.Message.initialize(this, opt_data, 0, -1, null, null);
 };
 goog.inherits(proto.truther.transaction.PredictiveAnalyzer, jspb.Message);
 if (goog.DEBUG && !COMPILED) {
@@ -101,8 +101,10 @@ isallowed: jspb.Message.getBooleanFieldWithDefault(msg, 1, false),
 reason: jspb.Message.getFieldWithDefault(msg, 2, ""),
 cardid: jspb.Message.getFieldWithDefault(msg, 3, ""),
 userid: jspb.Message.getFieldWithDefault(msg, 4, ""),
-walletaddress: jspb.Message.getFieldWithDefault(msg, 954859, ""),
-allowance: jspb.Message.getFieldWithDefault(msg, 6, "")
+walletaddress: jspb.Message.getFieldWithDefault(msg, 5, ""),
+allowance: jspb.Message.getFieldWithDefault(msg, 6, ""),
+transactionid: jspb.Message.getFieldWithDefault(msg, 7, ""),
+name: jspb.Message.getFieldWithDefault(msg, 8, "")
   };
 
   if (includeInstance) {
@@ -155,13 +157,21 @@ proto.truther.transaction.PredictiveAnalyzer.deserializeBinaryFromReader = funct
       var value = /** @type {string} */ (reader.readString());
       msg.setUserid(value);
       break;
-    case 954859:
+    case 5:
       var value = /** @type {string} */ (reader.readString());
       msg.setWalletaddress(value);
       break;
     case 6:
       var value = /** @type {string} */ (reader.readString());
       msg.setAllowance(value);
+      break;
+    case 7:
+      var value = /** @type {string} */ (reader.readString());
+      msg.setTransactionid(value);
+      break;
+    case 8:
+      var value = /** @type {string} */ (reader.readString());
+      msg.setName(value);
       break;
     default:
       reader.skipField();
@@ -223,7 +233,7 @@ proto.truther.transaction.PredictiveAnalyzer.serializeBinaryToWriter = function(
   f = message.getWalletaddress();
   if (f.length > 0) {
     writer.writeString(
-      954859,
+      5,
       f
     );
   }
@@ -231,6 +241,20 @@ proto.truther.transaction.PredictiveAnalyzer.serializeBinaryToWriter = function(
   if (f.length > 0) {
     writer.writeString(
       6,
+      f
+    );
+  }
+  f = message.getTransactionid();
+  if (f.length > 0) {
+    writer.writeString(
+      7,
+      f
+    );
+  }
+  f = message.getName();
+  if (f.length > 0) {
+    writer.writeString(
+      8,
       f
     );
   }
@@ -310,11 +334,11 @@ proto.truther.transaction.PredictiveAnalyzer.prototype.setUserid = function(valu
 
 
 /**
- * optional string walletAddress = 954859;
+ * optional string walletAddress = 5;
  * @return {string}
  */
 proto.truther.transaction.PredictiveAnalyzer.prototype.getWalletaddress = function() {
-  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 954859, ""));
+  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 5, ""));
 };
 
 
@@ -323,7 +347,7 @@ proto.truther.transaction.PredictiveAnalyzer.prototype.getWalletaddress = functi
  * @return {!proto.truther.transaction.PredictiveAnalyzer} returns this
  */
 proto.truther.transaction.PredictiveAnalyzer.prototype.setWalletaddress = function(value) {
-  return jspb.Message.setProto3StringField(this, 954859, value);
+  return jspb.Message.setProto3StringField(this, 5, value);
 };
 
 
@@ -342,6 +366,42 @@ proto.truther.transaction.PredictiveAnalyzer.prototype.getAllowance = function()
  */
 proto.truther.transaction.PredictiveAnalyzer.prototype.setAllowance = function(value) {
   return jspb.Message.setProto3StringField(this, 6, value);
+};
+
+
+/**
+ * optional string transactionId = 7;
+ * @return {string}
+ */
+proto.truther.transaction.PredictiveAnalyzer.prototype.getTransactionid = function() {
+  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 7, ""));
+};
+
+
+/**
+ * @param {string} value
+ * @return {!proto.truther.transaction.PredictiveAnalyzer} returns this
+ */
+proto.truther.transaction.PredictiveAnalyzer.prototype.setTransactionid = function(value) {
+  return jspb.Message.setProto3StringField(this, 7, value);
+};
+
+
+/**
+ * optional string name = 8;
+ * @return {string}
+ */
+proto.truther.transaction.PredictiveAnalyzer.prototype.getName = function() {
+  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 8, ""));
+};
+
+
+/**
+ * @param {string} value
+ * @return {!proto.truther.transaction.PredictiveAnalyzer} returns this
+ */
+proto.truther.transaction.PredictiveAnalyzer.prototype.setName = function(value) {
+  return jspb.Message.setProto3StringField(this, 8, value);
 };
 
 

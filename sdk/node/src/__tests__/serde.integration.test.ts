@@ -31,7 +31,7 @@ function srAvailable(): Promise<boolean> {
 // by using the CommonJS bindings relative to the repo root.
 function loadJspbCodec(): { codec: MessageCodec<unknown>; makeTx: (amount: string) => unknown } {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pb = require(path.resolve(__dirname, '../../../../gen/node/transaction_pb.js'));
+  const pb = require(path.resolve(__dirname, '../../../../gen/node/proto/transaction_pb.js'));
   const { Transaction, PredictiveAnalyzer } = pb as {
     Transaction: {
       new (): {

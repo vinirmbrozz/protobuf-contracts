@@ -4,7 +4,11 @@
   "type": "module",
   "main": "index.js",
   "dependencies": {
-    "google-protobuf": "^3.21.2"
+    "google-protobuf": "^3.21.4"
   },
-  "description": "SDKs para Node, Go e Python gerados via Protobuf"
+  "description": "SDKs para Node, Go e Python gerados via Protobuf",
+  "devDependencies": {
+    "protoc-gen-js": "^3.21.4-4",
+    "ts-proto": "^2.11.8"
+  }
 }
