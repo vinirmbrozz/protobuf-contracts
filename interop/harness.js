@@ -11,7 +11,7 @@
 'use strict';
 
 const path = require('path');
-const { Transaction, PredictiveAnalyzer } = require(path.join(__dirname, '../gen/node/transaction_pb.js'));
+const { Transaction, PredictiveAnalyzer } = require(path.join(__dirname, '../gen/node/proto/transaction_pb.js'));
 
 // ---------------------------------------------------------------------------
 // Confluent SR wire framing — §2 of docs/confluent-sr-serde-spec.md
@@ -117,9 +117,8 @@ assert(txSchemaId === 1, `Schema registered with id=${txSchemaId}`);
 // ---------------------------------------------------------------------------
 console.log('Test 1: Node.js round-trip serialize / frame / unframe / deserialize');
 {
-  // Note: gen/node/transaction_pb.js was generated from proto before fields 7+8
-  // (transactionId, name) were added. Those fields will appear after `buf generate`
-  // runs in CI and commits the updated SDK. Tests use fields 1-6 only.
+  // Note: gen/node/proto/transaction_pb.js — regenerated via buf generate (ROD-26).
+  // All 8 fields are now present. Tests use fields 1-6 only for brevity.
   const pa = new PredictiveAnalyzer();
   pa.setIsallowed(true);
   pa.setReason('approved by risk engine');

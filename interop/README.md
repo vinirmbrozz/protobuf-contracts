@@ -78,7 +78,7 @@ To enable cross-language deserialization tests:
 
 ```bash
 node -e "
-const {Transaction, PredictiveAnalyzer} = require('./gen/node/transaction_pb.js');
+const {Transaction, PredictiveAnalyzer} = require('./gen/node/proto/transaction_pb.js');
 const pa = new PredictiveAnalyzer();
 pa.setIsallowed(true); pa.setReason('approved'); pa.setCardid('card-123'); pa.setUserid('user-456');
 const tx = new Transaction();
