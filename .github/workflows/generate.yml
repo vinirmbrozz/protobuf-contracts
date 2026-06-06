@@ -1,144 +1,58 @@
-name: Generate SDKs (TypeScript, Go, Python)
-on: [push]
+name: Generate SDKs via buf
+
+# Runs only when proto sources or buf config change.
+# The auto-commit step uses [skip ci] so the bot's own push does not re-trigger.
+on:
+  push:
+    paths:
+      - 'proto/**'
+      - 'buf.gen.yaml'
+      - 'buf.yaml'
 
 jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
         with:
-          node-version: '18'
+          # Fetch full history so the auto-commit action can push back.
+          fetch-depth: 0
 
-      - name: Setup Go
-        uses: actions/setup-go@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      # Install buf CLI (same version as buf-ci.yml).
+      - uses: bufbuild/buf-action@v1
         with:
-          python-version: '3.11'
+          version: '1.47.2'
+          lint: false
+          breaking: false
+          push: false
 
-      - name: Install Protoc
+      # protoc-gen-go — needed by the `name: go` plugin in buf.gen.yaml.
+      - name: Install protoc-gen-go
         run: |
-          sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Install Protobuf Plugins
-        run: |
-          # TypeScript plugin
-          npm install ts-proto
-          
-          # Go plugin
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.31.0
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-          
-          # Python plugin (built-in with protoc)
 
-      - name: Create Output Directories
+      # ts-proto (protoc-gen-ts_proto) and protoc-gen-js live in devDependencies.
+      - name: Install buf plugin dependencies
         run: |
-          mkdir -p gen/typescript gen/go gen/python
+          npm install
+          echo "$(npm root)/.bin" >> $GITHUB_PATH
 
-      - name: Create TypeScript Package.json
-        run: |
-          cat > gen/typescript/package.json << 'EOF'
-          {
-            "name": "@truther/contracts-sdk",
-            "version": "1.0.0",
-            "description": "TypeScript SDK for Truther Contracts",
-            "main": "transaction.ts",
-            "types": "transaction.ts",
-            "keywords": ["truther", "contracts", "protobuf"],
-            "author": "vinirmbrozz",
-            "license": "MIT",
-            "repository": {
-              "type": "git",
-              "url": "https://github.com/vinirmbrozz/truther-contracts.git"
-            }
-          }
-          EOF
+      # Single source of truth: buf.gen.yaml drives all code generation.
+      - name: Run buf generate
+        run: buf generate
 
-      - name: Create Go go.mod
-        run: |
-          cat > gen/go/go.mod << 'EOF'
-          module github.com/vinirmbrozz/truther-contracts/gen/go
-
-          go 1.21
-
-          require google.golang.org/protobuf v1.31.0
-          EOF
-
-      - name: Compile Protobuf - Python
-        run: |
-          protoc --proto_path=proto \
-            --python_out=gen/python \
-            proto/transaction.proto
-
-      - name: Create Python Package Structure
-        run: |
-          # Criar estrutura de pacote
-          mkdir -p gen/python/truther_contracts_sdk
-          
-          # Mover arquivo gerado para dentro do pacote
-          mv gen/python/transaction_pb2.py gen/python/truther_contracts_sdk/
-          
-          # Criar __init__.py que exporta as classes
-          cat > gen/python/truther_contracts_sdk/__init__.py << 'EOF'
-          from .transaction_pb2 import Transaction, PredictiveAnalyzer
-
-          __all__ = ["Transaction", "PredictiveAnalyzer"]
-          EOF
-
-      - name: Create Python setup.py
-        run: |
-          cat > gen/python/setup.py << 'EOF'
-          from setuptools import setup, find_packages
-
-          setup(
-              name="truther-contracts-sdk",
-              version="1.0.0",
-              description="Python SDK for Truther Contracts",
-              author="vinirmbrozz",
-              packages=find_packages(),
-              install_requires=[
-                  "protobuf>=4.24.0",
-              ],
-              python_requires=">=3.8",
-          )
-          EOF
-
-      - name: Create Python MANIFEST.in
-        run: |
-          cat > gen/python/MANIFEST.in << 'EOF'
-          recursive-include truther_contracts_sdk *.py
-          include truther_contracts_sdk/*.py
-          EOF
-
-      - name: Compile Protobuf - TypeScript
-        run: |
-          protoc --proto_path=proto \
-            --plugin=protoc-gen-ts_proto=$(npm root)/ts-proto/protoc-gen-ts_proto \
-            --ts_proto_out=gen/typescript \
-            --ts_proto_opt=esModuleInterop=true \
-            proto/transaction.proto
-
-      - name: Compile Protobuf - Go
-        run: |
-          protoc --proto_path=proto \
-            --go_out=gen/go \
-            --go_opt=paths=source_relative \
-            proto/transaction.proto
-
-      - name: Compile Protobuf - Python
-        run: |
-          protoc --proto_path=proto \
-            --python_out=gen/python \
-            proto/transaction.proto
-
-      - name: Commit and Push
-        uses: stefanzweifel/git-auto-commit-action@v4
+      # Commit gen/ + sdk/ back to the branch.  [skip ci] breaks the push loop.
+      - name: Commit generated files
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "update generated SDKs (TypeScript, Go, Python)"
-          file_pattern: 'gen/*'
+          commit_message: "chore(gen): regenerar via buf [skip ci]"
+          file_pattern: gen sdk

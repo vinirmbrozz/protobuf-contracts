@@ -16,3 +16,6 @@ Thumbs.db
 
 # Temporários de Build
 *.tsbuildinfo
+
+# Legacy gen/python package layout — replaced by gen/python/proto/ (ROD-26)
+gen/python/truther_contracts_sdk/
