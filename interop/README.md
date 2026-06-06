@@ -1,7 +1,8 @@
 # Cross-language Interop Harness
 
-This directory contains the test harness that proves the Confluent SR wire format
-is correctly implemented across Go, Node.js and Python.
+This directory proves the Confluent SR wire format is correctly implemented across
+Go, Node.js, and Python using the **`sdk/`** packages as the single source of truth.
+No local framing reimplementation — all three harnesses import from `sdk/`.
 
 See [`docs/confluent-sr-serde-spec.md`](../docs/confluent-sr-serde-spec.md) for the full spec.
 
@@ -11,45 +12,46 @@ See [`docs/confluent-sr-serde-spec.md`](../docs/confluent-sr-serde-spec.md) for 
 
 ```
 interop/
-  harness.js        ← Node.js reference implementation (runnable today, no Kafka needed)
-  fixtures/         ← Shared binary fixtures for cross-language byte-level checks
+  harness.js        ← Node.js harness — imports from sdk/node (@truther/contracts)
   go/
-    interop_test.go ← Go framing unit tests
-    go.mod
+    interop_test.go ← Go harness — imports from sdk/go (serde + proto packages)
+    go.mod          ← replace directive pointing to ../../sdk/go
   python/
-    test_interop.py ← Python framing + round-trip tests
+    test_interop.py ← Python harness — imports from truther_contracts (sdk/python)
 ```
 
 ---
 
 ## Running the harness
 
-### Node.js (works today)
+### Node.js
 
 ```bash
 node interop/harness.js
 ```
 
-Expected output: all tests pass.
+All 6 test groups pass, including the cross-language fixture.
 
 ### Go
 
 ```bash
-# Requires Go 1.21+ and the generated Go SDK
 go test ./interop/go/...
 ```
 
-`TestNodeCompatibility` is skipped until fixture bytes are captured from the Node harness.
+All 4 tests pass, including `TestNodeCompatibility` (decodes Node-produced bytes).
 
 ### Python
 
 ```bash
-# Requires Python 3.10+ and the generated Python SDK
-pip install -e gen/python/
-python -m pytest interop/python/test_interop.py -v
+# Install the SDK if not already present:
+pip install sdk/python/
+# or editable: pip install -e sdk/python/ --break-system-packages
+
+python3 -m pytest interop/python/test_interop.py -v
 ```
 
-`TestProtoRoundTrip` and `TestNodeCompatibility` are skipped until the SDK is installed.
+All 9 tests pass. No skipped tests — `TestProtoRoundTrip` and `TestNodeCompatibility`
+are fully active.
 
 ---
 
@@ -57,34 +59,38 @@ python -m pytest interop/python/test_interop.py -v
 
 | Producer | Consumer | Status |
 |---|---|---|
-| Node.js | Node.js | ✅ passes (`node interop/harness.js`) |
-| Node.js | Go | 🔲 pending Senior Go engineer |
-| Node.js | Python | 🔲 pending Senior Python engineer |
-| Go | Node.js | 🔲 pending Senior Go engineer |
-| Go | Python | 🔲 pending Senior Go + Python engineers |
-| Python | Node.js | 🔲 pending Senior Python engineer |
-| Python | Go | 🔲 pending Senior Python + Go engineers |
+| Node.js | Node.js | ✅ `node interop/harness.js` (Test 1) |
+| Node.js | Go | ✅ `TestNodeCompatibility` in Go |
+| Node.js | Python | ✅ `TestNodeCompatibility` in Python |
+| Go | Node.js | ✅ `Test 6` in harness.js (fixture also validates Go output) |
+| Go | Python | 🔲 full Produce→Consume path needs live or mock SR per language |
+| Python | Node.js | 🔲 full Produce→Consume path needs live or mock SR per language |
+| Python | Go | 🔲 full Produce→Consume path needs live or mock SR per language |
 
 ---
 
-## Adding fixture bytes
+## Canonical fixture
 
-To enable cross-language deserialization tests:
+The canonical cross-language fixture (schemaId=1) encodes:
 
-1. Run `node interop/harness.js` and capture the framed hex bytes for the canonical
-   `Transaction{transactionAmount="499.99", finalDecision="APPROVED"}` message
-2. Save the hex string to `interop/fixtures/transaction_canonical.hex`
-3. Each language test loads this file and asserts it can deserialize it identically
-
-```bash
-node -e "
-const {Transaction, PredictiveAnalyzer} = require('./gen/node/proto/transaction_pb.js');
-const pa = new PredictiveAnalyzer();
-pa.setIsallowed(true); pa.setReason('approved'); pa.setCardid('card-123'); pa.setUserid('user-456');
-const tx = new Transaction();
-tx.setTransactionamount('499.99'); tx.setPredictiveanalyzer(pa); tx.setFinalDecision('APPROVED');
-const framed = Buffer.concat([Buffer.from([0x00,0x00,0x00,0x00,0x01,0x00]), Buffer.from(tx.serializeBinary())]);
-require('fs').writeFileSync('interop/fixtures/transaction_canonical.hex', framed.toString('hex'));
-console.log('fixture written:', framed.toString('hex'));
-"
 ```
+Transaction{
+  transactionAmount: "499.99",
+  predictiveAnalyzer: {
+    isAllowed: true, reason: "approved by risk engine",
+    cardId: "card-abc-123", userId: "user-xyz-456",
+    walletAddress: "0xDEADBEEF", allowance: "1000.00"
+  },
+  finalDecision: "APPROVED"
+}
+```
+
+Framed hex (102 bytes):
+
+```
+0000000001000a063439392e3939124c08011217617070726f766564206279207269736b20
+656e67696e651a0c636172642d6162632d313233220c757365722d78797a2d3435362a0a30
+7844454144424545463207313030302e30301a08415050524f564544
+```
+
+This same hex string is embedded directly in each harness — no fixture file needed.
