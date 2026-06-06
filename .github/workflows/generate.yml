@@ -34,6 +34,10 @@ jobs:
           breaking: false
           push: false
 
+      # protoc — needed by buf's built-in `name: python` plugin (calls protoc --python_out).
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y protobuf-compiler
+
       # protoc-gen-go — needed by the `name: go` plugin in buf.gen.yaml.
       - name: Install protoc-gen-go
         run: |
