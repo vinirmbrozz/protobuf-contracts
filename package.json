@@ -8,7 +8,7 @@
   },
   "description": "SDKs para Node, Go e Python gerados via Protobuf",
   "devDependencies": {
-    "protoc-gen-js": "^3.21.4-4",
-    "ts-proto": "^2.11.8"
+    "protoc-gen-js": "3.21.4-4",
+    "ts-proto": "2.11.8"
   }
 }

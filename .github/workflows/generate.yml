@@ -29,7 +29,7 @@ jobs:
       # Install buf CLI (same version as buf-ci.yml).
       - uses: bufbuild/buf-action@v1
         with:
-          version: '1.47.2'
+          version: '1.70.0'
           lint: false
           breaking: false
           push: false

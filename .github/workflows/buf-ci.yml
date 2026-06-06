@@ -26,7 +26,7 @@ jobs:
 
       - uses: bufbuild/buf-action@v1
         with:
-          version: '1.47.2'
+          version: '1.70.0'
           push: false
           lint: true
           breaking: false
@@ -50,7 +50,7 @@ jobs:
 
       - uses: bufbuild/buf-action@v1
         with:
-          version: '1.47.2'
+          version: '1.70.0'
           push: false
           lint: false
           breaking: true
