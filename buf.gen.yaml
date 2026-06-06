@@ -4,14 +4,25 @@ version: v1
 # To switch to BSR-hosted remote plugins, replace each `name:` entry with
 # the corresponding `remote: buf.build/...` plugin and remove the local
 # install steps from CI workflows.
+#
+# Strategy A (ROD-22): each language plugin emits to both gen/<lang>/ (canonical
+# record, never deleted) and sdk/<lang>/ (publishable SDK embedding). Running
+# `buf generate` keeps both trees in sync automatically.
 plugins:
-  # Go — requires: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+  # --- Go ---
+  # Canonical codegen record
   - name: go
     out: gen/go
     opt:
       - paths=source_relative
+  # SDK embedding (Strategy A — ROD-22)
+  - name: go
+    out: sdk/go
+    opt:
+      - paths=source_relative
 
-  # TypeScript (ts-proto) — requires: npm install ts-proto (provides protoc-gen-ts_proto)
+  # --- TypeScript (ts-proto) — requires: npm install ts-proto ---
+  # Canonical codegen record
   - name: ts_proto
     path: node_modules/ts-proto/protoc-gen-ts_proto
     out: gen/typescript
@@ -19,14 +30,27 @@ plugins:
       - esModuleInterop=true
       - outputServices=false
       - oneof=unions
+  # SDK embedding (Strategy A — ROD-22)
+  - name: ts_proto
+    path: node_modules/ts-proto/protoc-gen-ts_proto
+    out: sdk/node/src/generated
+    opt:
+      - esModuleInterop=true
+      - outputServices=false
+      - oneof=unions
 
-  # Node.js CommonJS — requires protoc-gen-js on PATH (from google-protobuf npm package)
+  # --- Node.js CommonJS — requires protoc-gen-js on PATH ---
+  # Canonical codegen record only; Node SDK uses the ts_proto output above.
   - name: js
     out: gen/node
     opt:
       - import_style=commonjs
       - binary
 
-  # Python — built-in protoc plugin (no extra install needed)
+  # --- Python — built-in protoc plugin ---
+  # Canonical codegen record
   - name: python
     out: gen/python
+  # SDK embedding (Strategy A — ROD-22)
+  - name: python
+    out: sdk/python/truther_contracts

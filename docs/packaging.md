@@ -155,13 +155,14 @@ producer.produce(card_id="123", amount=99.0)
 There are two supported integration strategies; choose the one that minimises build complexity
 for each language:
 
-### Strategy A — direct codegen target (preferred)
+### Strategy A — direct codegen target (applied, ROD-22)
 
-Add a second output in `buf.gen.yaml` that targets `sdk/<lang>/generated/` (or the Go package
-root). `buf generate` writes both to `gen/<lang>/` (canonical record) and to `sdk/<lang>/`.
+`buf.gen.yaml` carries dual output entries per language plugin: one to `gen/<lang>/` (canonical
+record, never deleted) and one to `sdk/<lang>/`. Running `buf generate` keeps both trees in sync
+automatically.
 
 ```yaml
-# buf.gen.yaml excerpt — illustrative (not yet applied; requires CTO sign-off on gen paths)
+# buf.gen.yaml — applied as of ROD-22
 plugins:
   - name: go
     out: gen/go          # canonical gen record
@@ -169,6 +170,16 @@ plugins:
   - name: go
     out: sdk/go          # SDK embedding
     opt: [paths=source_relative]
+  - name: ts_proto
+    out: gen/typescript  # canonical gen record
+    opt: [esModuleInterop=true, outputServices=false, oneof=unions]
+  - name: ts_proto
+    out: sdk/node/src/generated  # SDK embedding
+    opt: [esModuleInterop=true, outputServices=false, oneof=unions]
+  - name: python
+    out: gen/python      # canonical gen record
+  - name: python
+    out: sdk/python/truther_contracts  # SDK embedding
 ```
 
 ### Strategy B — copy step in CI
@@ -179,27 +190,26 @@ Simpler to set up; requires CI discipline to keep them in sync.
 **Both strategies produce the same result**: a `sdk/<lang>/` directory that is fully self-contained
 and can be tagged and published without reference to `gen/`.
 
-> **Decision required**: the Platform Engineer will raise a CTO sign-off issue before touching
-> `buf.gen.yaml` output paths, since that affects the codegen pipeline spec in
-> [versioning-policy.md](versioning-policy.md) §5.
+Strategy A was selected (D-3, confirmed by CTO) and applied in ROD-22.
 
 ---
 
-## 5. Package Names — Escalation Required Before Registration
+## 5. Package Names — Confirmed (ROD-22)
 
-| Language | Proposed package name | Registry | Requires account | Status |
-|----------|----------------------|----------|-----------------|--------|
-| Go | `github.com/vinirmbrozz/truther-contracts/sdk/go` | GitHub (public) | No new account needed | **Approved by default** (tied to existing repo) |
-| Node/TS | `@truther/contracts` | npm (public) | npm org `truther` must exist | **Escalate to CTO before registering** |
-| Python | `truther-contracts` | PyPI | PyPI account required | **Escalate to CTO before registering** |
+| Language | Package name | Registry | Status |
+|----------|-------------|----------|--------|
+| Go | `github.com/vinirmbrozz/truther-contracts/sdk/go` | GitHub (public) | **Confirmed** |
+| Node/TS | `@truther/contracts` | npm (public) | **Confirmed** (D-1, ROD-22) |
+| Python | `truther-contracts` | PyPI | **Confirmed** (D-2, ROD-22) |
 
-The existing ROD-16 branch uses `@truther/kafka-serde`. The proposed canonical name `@truther/contracts`
-is broader and cleaner (one package = all contracts), but **renaming from `@truther/kafka-serde` is a
-breaking change for any consumer already pointing to that name**. The CTO must confirm the final npm
-name before any publish happens.
+The npm org `truther` must exist before publish; the founder handles npm/PyPI account setup.
+The Node SDK branch ([ROD-16](/ROD/issues/ROD-16)) must rename the package from `@truther/kafka-serde`
+to `@truther/contracts` as part of the conformance step — this is a breaking change for consumers
+on the old name.
 
-Similarly, ROD-17 uses `truther-contracts-sdk` on PyPI; the proposal here is to shorten it to
-`truther-contracts`. Confirm with CTO if the old name has any existing registrations.
+Similarly, [ROD-17](/ROD/issues/ROD-17) uses `truther-contracts-sdk`; conformance must rename it to
+`truther-contracts`. The founder must verify no external registrations exist for the old names before
+publishing under the new ones. **Agents do not publish**.
 
 ---
 
@@ -377,14 +387,26 @@ These rules apply to all three languages after conformance:
 
 ---
 
-## 9. Open Decisions (CTO Input Required)
+## 9. Decisions — All RESOLVED (ROD-22)
 
-| # | Decision | Options | Current leaning |
-|---|----------|---------|----------------|
-| D-1 | npm package name | `@truther/contracts` (proposed) vs keep `@truther/kafka-serde` | `@truther/contracts` — cleaner, broader |
-| D-2 | PyPI package name | `truther-contracts` (proposed) vs keep `truther-contracts-sdk` | `truther-contracts` — shorter |
-| D-3 | Gen embedding strategy | Strategy A (dual codegen target in buf.gen.yaml) vs Strategy B (copy step) | Strategy A — but requires buf.gen.yaml change, needs CTO sign-off per versioning-policy §5 |
-| D-4 | Go interop: embed vs import | `sdk/go/` embeds `transaction.pb.go` (no second module dep) vs imports `gen/go` module | Embed — simpler for consumers |
+| # | Decision | Resolved value | Status |
+|---|----------|---------------|--------|
+| D-1 | npm package name | `@truther/contracts` | **RESOLVED** |
+| D-2 | PyPI package name | `truther-contracts` | **RESOLVED** |
+| D-3 | Gen embedding strategy | Strategy A — dual `buf.gen.yaml` outputs (applied in ROD-22) | **RESOLVED** |
+| D-4 | Go SDK: embed vs import | Embed `transaction.pb.go` directly in `sdk/go/` | **RESOLVED** |
+
+> All four decisions confirmed by CTO. Resolved in [ROD-22](/ROD/issues/ROD-22); applied in this
+> commit. No further CTO sign-off is required for these items.
+
+### 9.1 interop/ — future update (post ROD-15/16/17)
+
+`interop/` currently imports generated types from `gen/<lang>/` paths. Once the three language
+conformances land ([ROD-15](/ROD/issues/ROD-15), [ROD-16](/ROD/issues/ROD-16),
+[ROD-17](/ROD/issues/ROD-17)), the Platform Engineer will update `interop/` to import directly from
+`sdk/<lang>/` instead. **Do not update `interop/` until all three conformances are merged to
+`main`** — the round-trip harness must continue to pass against the canonical `gen/` outputs in the
+meantime.
 
 ---
 
