@@ -7,12 +7,16 @@ on:
       - 'buf.yaml'
       - 'buf.gen.yaml'
       - 'interop/**'
+      - 'sdk/node/**'
+      - 'sdk/python/**'
   pull_request:
     paths:
       - 'proto/**'
       - 'buf.yaml'
       - 'buf.gen.yaml'
       - 'interop/**'
+      - 'sdk/node/**'
+      - 'sdk/python/**'
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -69,7 +73,14 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
+      - name: Build sdk/node (@truther/contracts)
+        # Compile TypeScript → dist/ so the @truther/contracts package is ready.
+        working-directory: sdk/node
+        run: npm install && npm run build
+
+      - name: Install interop dependencies
+        # Installs @truther/contracts from the local sdk/node build.
+        working-directory: interop
         run: npm install
 
       - name: Run Node.js interop harness
@@ -106,8 +117,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install pytest
-        run: pip install pytest
+      - name: Install sdk/python and pytest
+        # truther_contracts provides Transaction, PredictiveAnalyzer, KafkaSerde.
+        run: pip install sdk/python/ pytest
 
       - name: Run Python interop tests
         run: python -m pytest interop/python/test_interop.py -v

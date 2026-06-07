@@ -10,18 +10,17 @@
 
 'use strict';
 
-const path = require('path');
-
 // ---------------------------------------------------------------------------
-// SDK imports — zero local framing; use sdk/node directly
+// SDK imports — @truther/contracts package (sdk/node); zero local framing
 // ---------------------------------------------------------------------------
 
-const { Transaction, PredictiveAnalyzer } = require(
-  path.join(__dirname, '../sdk/node/dist/generated/transaction')
-);
-const { frameMessage, parseFrame, MAGIC_BYTE } = require(
-  path.join(__dirname, '../sdk/node/dist/framing')
-);
+const {
+  Transaction,
+  PredictiveAnalyzer,
+  frameMessage,
+  parseFrame,
+  MAGIC_BYTE,
+} = require('@truther/contracts');
 
 // ---------------------------------------------------------------------------
 // Mock Schema Registry — in-memory store for testing
