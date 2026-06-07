@@ -1,3 +1,6 @@
 {
-  "type": "commonjs"
+  "type": "commonjs",
+  "dependencies": {
+    "@truther/contracts": "file:../sdk/node"
+  }
 }

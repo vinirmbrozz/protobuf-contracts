@@ -1,11 +1,10 @@
 // Package interop — Go interop harness for the Confluent SR serde contract.
 //
-// This test validates that the Go implementation of the Confluent envelope
-// framing is byte-for-byte compatible with the Node.js reference implementation.
+// Validates that the Go SDK (sdk/go) framing and deserialization are
+// byte-for-byte compatible with the Node.js reference harness.
 //
-// STATUS: EXPECTED TO FAIL until the Senior Go engineer implements the
-// truther-go-kafka library under docs/confluent-sr-serde-spec.md.
-// The test structure is correct; only the import path needs updating.
+// Uses net/http/httptest to simulate the Confluent Schema Registry REST API —
+// no real Kafka or Schema Registry instance is required.
 //
 // Run: go test ./interop/go/...
 package interop_test
@@ -13,104 +12,269 @@ package interop_test
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
-	// TODO: Replace with the actual generated proto import once buf generate runs
-	// txpb "github.com/vinirmbrozz/truther-contracts/gen/go"
+	serde "github.com/vinirmbrozz/truther-contracts/sdk/go"
+	txpb "github.com/vinirmbrozz/truther-contracts/sdk/go/proto"
+	"google.golang.org/protobuf/proto"
 )
 
-const magicByte = byte(0x00)
+// ---------------------------------------------------------------------------
+// Mock Schema Registry — mirrors the one in sdk/go/serde_test.go
+// ---------------------------------------------------------------------------
 
-// framingHeader returns the 6-byte Confluent SR header for a given schema ID.
-func framingHeader(schemaID uint32) []byte {
-	h := make([]byte, 6)
-	h[0] = magicByte
-	binary.BigEndian.PutUint32(h[1:5], schemaID)
-	h[5] = 0x00 // message index: first message (Truther convention)
-	return h
+func mockSchemaRegistry(t *testing.T) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	registered := make(map[string]int)
+	nextID := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/versions"):
+			parts := strings.SplitN(r.URL.Path, "/", 4)
+			if len(parts) < 4 {
+				http.Error(w, "bad path", http.StatusBadRequest)
+				return
+			}
+			subject := parts[2]
+			mu.Lock()
+			id, exists := registered[subject]
+			if !exists {
+				nextID++
+				id = nextID
+				registered[subject] = id
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]int{"id": id})
+
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/schemas/ids/"):
+			var id int
+			if _, err := fmt.Sscanf(r.URL.Path, "/schemas/ids/%d", &id); err != nil {
+				http.Error(w, "bad id", http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			found := false
+			for _, regID := range registered {
+				if regID == id {
+					found = true
+					break
+				}
+			}
+			mu.Unlock()
+			if found {
+				_ = json.NewEncoder(w).Encode(map[string]string{"schema": "stub", "schemaType": "PROTOBUF"})
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"error_code": 40403, "message": "Schema not found"})
+			}
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
-// frameMessage prepends the Confluent SR envelope to serialized proto bytes.
-func frameMessage(schemaID uint32, msgBytes []byte) []byte {
-	out := make([]byte, 6+len(msgBytes))
-	copy(out[:6], framingHeader(schemaID))
-	copy(out[6:], msgBytes)
-	return out
+func newTestSerde(t *testing.T, srv *httptest.Server) *serde.Serde {
+	t.Helper()
+	s := serde.NewWithConfig(serde.Config{SRURL: srv.URL})
+	s.RegisterType("transactions", &txpb.Transaction{}, "")
+	return s
 }
 
-// parseFrame validates and splits a Confluent-framed Kafka value.
-func parseFrame(data []byte) (schemaID uint32, msgBytes []byte, err error) {
-	if len(data) < 6 {
-		return 0, nil, fmt.Errorf("frame too short: %d bytes", len(data))
-	}
-	if data[0] != magicByte {
-		return 0, nil, fmt.Errorf("invalid magic byte 0x%02x", data[0])
-	}
-	schemaID = binary.BigEndian.Uint32(data[1:5])
-	return schemaID, data[6:], nil
-}
+// ---------------------------------------------------------------------------
+// TestFramingRoundTrip — produce / consume a Transaction via the SDK serde.
+// ---------------------------------------------------------------------------
 
-// TestFramingRoundTrip verifies the framing header is produced and parsed correctly.
 func TestFramingRoundTrip(t *testing.T) {
-	const schemaID = uint32(1)
-	payload := []byte{0x0a, 0x06, 0x31, 0x30, 0x30, 0x2e, 0x30, 0x30} // proto bytes for transactionAmount="100.00"
+	srv := mockSchemaRegistry(t)
+	s := newTestSerde(t, srv)
 
-	framed := frameMessage(schemaID, payload)
+	tx := &txpb.Transaction{
+		TransactionAmount: "100.00",
+		PredictiveAnalyzer: &txpb.PredictiveAnalyzer{
+			IsAllowed: true,
+			Reason:    "test",
+			CardId:    "card-1",
+			UserId:    "user-1",
+		},
+		FinalDecision: "APPROVED",
+	}
 
+	framed, err := s.Produce("transactions", tx)
+	if err != nil {
+		t.Fatalf("Produce: %v", err)
+	}
+
+	// Validate Confluent header structure
+	if len(framed) < 6 {
+		t.Fatalf("framed len %d < 6", len(framed))
+	}
 	if framed[0] != 0x00 {
 		t.Errorf("magic byte: got 0x%02x, want 0x00", framed[0])
 	}
-	if binary.BigEndian.Uint32(framed[1:5]) != schemaID {
-		t.Errorf("schema ID: got %d, want %d", binary.BigEndian.Uint32(framed[1:5]), schemaID)
+	schemaID := binary.BigEndian.Uint32(framed[1:5])
+	if schemaID == 0 {
+		t.Error("schema ID is 0; expected non-zero from SR")
 	}
 	if framed[5] != 0x00 {
 		t.Errorf("message index byte: got 0x%02x, want 0x00", framed[5])
 	}
 
-	gotID, gotPayload, err := parseFrame(framed)
+	// Round-trip
+	msg, err := s.Consume("transactions", framed)
 	if err != nil {
-		t.Fatalf("parseFrame error: %v", err)
+		t.Fatalf("Consume: %v", err)
 	}
-	if gotID != schemaID {
-		t.Errorf("parsed schema ID: got %d, want %d", gotID, schemaID)
+	got, ok := msg.(*txpb.Transaction)
+	if !ok {
+		t.Fatalf("Consume returned %T, want *txpb.Transaction", msg)
 	}
-	if !bytes.Equal(gotPayload, payload) {
-		t.Errorf("parsed payload mismatch")
+	if !proto.Equal(tx, got) {
+		t.Errorf("roundtrip mismatch: got %v, want %v", got, tx)
 	}
 }
 
-// TestInvalidMagicByte verifies that frames with a wrong magic byte are rejected.
+// ---------------------------------------------------------------------------
+// TestInvalidMagicByte — consumer must reject frames with wrong magic byte.
+// ---------------------------------------------------------------------------
+
 func TestInvalidMagicByte(t *testing.T) {
+	srv := mockSchemaRegistry(t)
+	s := newTestSerde(t, srv)
+
 	bad := []byte{0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x0a, 0x03}
-	_, _, err := parseFrame(bad)
+	_, err := s.Consume("transactions", bad)
 	if err == nil {
-		t.Error("expected error for invalid magic byte, got nil")
+		t.Fatal("expected error for invalid magic byte, got nil")
+	}
+	if !errors.Is(err, serde.ErrInvalidMagicByte) {
+		t.Errorf("want ErrInvalidMagicByte, got: %v", err)
 	}
 }
 
-// TestUndersizedFrame verifies that truncated frames are rejected.
+// ---------------------------------------------------------------------------
+// TestUndersizedFrame — consumer must reject frames shorter than 6 bytes.
+// ---------------------------------------------------------------------------
+
 func TestUndersizedFrame(t *testing.T) {
-	if _, _, err := parseFrame([]byte{0x00, 0x00, 0x00}); err == nil {
-		t.Error("expected error for 3-byte frame, got nil")
+	srv := mockSchemaRegistry(t)
+	s := newTestSerde(t, srv)
+
+	cases := [][]byte{
+		{0x00, 0x00, 0x00},
+		{},
 	}
-	if _, _, err := parseFrame([]byte{}); err == nil {
-		t.Error("expected error for empty frame, got nil")
+	for _, tc := range cases {
+		_, err := s.Consume("transactions", tc)
+		if err == nil {
+			t.Errorf("expected error for %d-byte frame, got nil", len(tc))
+		}
+		if !errors.Is(err, serde.ErrFrameTooShort) {
+			t.Errorf("want ErrFrameTooShort for %d-byte frame, got: %v", len(tc), err)
+		}
 	}
 }
 
-// TestNodeCompatibility checks that Go framing produces the same bytes as
-// the Node.js reference harness for the same mock Transaction payload.
+// ---------------------------------------------------------------------------
+// TestNodeCompatibility — Go SDK must decode bytes produced by sdk/node.
 //
-// The fixture bytes below were captured from `node interop/harness.js`:
-// schemaId=1, Transaction{transactionAmount="499.99", finalDecision="APPROVED", ...}
+// Fixture bytes were captured from interop/harness.js (Test 1 output):
 //
-// To regenerate: run the Node harness and add a hex dump of the framed bytes.
-//
-// TODO: populate fixedFrameHex once the Node harness captures the fixture.
+//   Transaction{
+//     transactionAmount: "499.99",
+//     predictiveAnalyzer: {
+//       isAllowed: true, reason: "approved by risk engine",
+//       cardId: "card-abc-123", userId: "user-xyz-456",
+//       walletAddress: "0xDEADBEEF", allowance: "1000.00",
+//     },
+//     finalDecision: "APPROVED",
+//   }  — schemaId = 1
+// ---------------------------------------------------------------------------
+
 func TestNodeCompatibility(t *testing.T) {
-	t.Skip("TODO: populate fixture bytes from Node harness output and remove Skip")
-	// fixedFrameHex := "000000000100..."
-	// expected, _ := hex.DecodeString(fixedFrameHex)
-	// ... compare with Go-produced framing
+	const fixtureHex = "0000000001000a063439392e3939124c08011217617070726f766564206279207269736b" +
+		"20656e67696e651a0c636172642d6162632d313233220c757365722d78797a2d3435362a" +
+		"0a307844454144424545463207313030302e30301a08415050524f564544"
+
+	fixtureBytes, err := hex.DecodeString(fixtureHex)
+	if err != nil {
+		t.Fatalf("decode fixture hex: %v", err)
+	}
+
+	srv := mockSchemaRegistry(t)
+	s := newTestSerde(t, srv)
+
+	// Produce one message so that schemaId=1 is registered and cached in the
+	// serde's idKnown map — this lets Consume validate the fixture's schema ID.
+	seed := &txpb.Transaction{TransactionAmount: "0.01", FinalDecision: "SEED"}
+	if _, err := s.Produce("transactions", seed); err != nil {
+		t.Fatalf("Produce seed: %v", err)
+	}
+
+	// Verify header bytes
+	if fixtureBytes[0] != 0x00 {
+		t.Errorf("fixture magic byte: 0x%02x, want 0x00", fixtureBytes[0])
+	}
+	schemaID := binary.BigEndian.Uint32(fixtureBytes[1:5])
+	if schemaID != 1 {
+		t.Errorf("fixture schema ID: %d, want 1", schemaID)
+	}
+
+	// Decode via SDK Consume
+	msg, err := s.Consume("transactions", fixtureBytes)
+	if err != nil {
+		t.Fatalf("Consume Node fixture: %v", err)
+	}
+	tx, ok := msg.(*txpb.Transaction)
+	if !ok {
+		t.Fatalf("Consume returned %T, want *txpb.Transaction", msg)
+	}
+
+	if tx.TransactionAmount != "499.99" {
+		t.Errorf("transactionAmount: got %q, want %q", tx.TransactionAmount, "499.99")
+	}
+	if tx.FinalDecision != "APPROVED" {
+		t.Errorf("finalDecision: got %q, want %q", tx.FinalDecision, "APPROVED")
+	}
+	if !tx.PredictiveAnalyzer.IsAllowed {
+		t.Error("isAllowed: got false, want true")
+	}
+	if tx.PredictiveAnalyzer.CardId != "card-abc-123" {
+		t.Errorf("cardId: got %q, want %q", tx.PredictiveAnalyzer.CardId, "card-abc-123")
+	}
+	if tx.PredictiveAnalyzer.UserId != "user-xyz-456" {
+		t.Errorf("userId: got %q, want %q", tx.PredictiveAnalyzer.UserId, "user-xyz-456")
+	}
+	if tx.PredictiveAnalyzer.WalletAddress != "0xDEADBEEF" {
+		t.Errorf("walletAddress: got %q, want %q", tx.PredictiveAnalyzer.WalletAddress, "0xDEADBEEF")
+	}
+	if tx.PredictiveAnalyzer.Allowance != "1000.00" {
+		t.Errorf("allowance: got %q, want %q", tx.PredictiveAnalyzer.Allowance, "1000.00")
+	}
+	if tx.PredictiveAnalyzer.Reason != "approved by risk engine" {
+		t.Errorf("reason: got %q, want %q", tx.PredictiveAnalyzer.Reason, "approved by risk engine")
+	}
+
+	// Prove the payload bytes are identical (proto3 determinism)
+	serialized, _ := proto.Marshal(tx)
+	reimaged, err := hex.DecodeString(fixtureHex)
+	if err != nil {
+		t.Fatalf("re-decode fixture hex: %v", err)
+	}
+	if !bytes.Equal(serialized, reimaged[6:]) {
+		t.Error("proto bytes differ from fixture — cross-language encoding diverged")
+	}
 }

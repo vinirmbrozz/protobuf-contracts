@@ -7,12 +7,16 @@ on:
       - 'buf.yaml'
       - 'buf.gen.yaml'
       - 'interop/**'
+      - 'sdk/node/**'
+      - 'sdk/python/**'
   pull_request:
     paths:
       - 'proto/**'
       - 'buf.yaml'
       - 'buf.gen.yaml'
       - 'interop/**'
+      - 'sdk/node/**'
+      - 'sdk/python/**'
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -69,7 +73,14 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
+      - name: Build sdk/node (@truther/contracts)
+        # Compile TypeScript → dist/ so the @truther/contracts package is ready.
+        working-directory: sdk/node
+        run: npm install && npm run build
+
+      - name: Install interop dependencies
+        # Installs @truther/contracts from the local sdk/node build.
+        working-directory: interop
         run: npm install
 
       - name: Run Node.js interop harness
@@ -87,6 +98,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
+
+      - name: Tidy Go module
+        # go mod tidy ensures go.mod/go.sum are consistent with Go 1.21 before testing.
+        # sdk/go declares go 1.21, so interop/go must match; tidy syncs any residual diff
+        # between the locally-generated go.sum (Go 1.19) and the CI toolchain (Go 1.21).
+        working-directory: interop/go
+        run: go mod tidy
 
       - name: Run Go interop tests
         # interop/go is a nested Go module (own go.mod); run from inside it.
@@ -106,8 +124,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install pytest
-        run: pip install pytest
+      - name: Install sdk/python and pytest
+        # truther_contracts provides Transaction, PredictiveAnalyzer, KafkaSerde.
+        run: pip install sdk/python/ pytest
 
       - name: Run Python interop tests
         run: python -m pytest interop/python/test_interop.py -v
