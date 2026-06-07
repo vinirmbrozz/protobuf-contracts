@@ -1,6 +1,6 @@
 module github.com/vinirmbrozz/truther-contracts/interop/go
 
-go 1.19
+go 1.21
 
 require (
 	github.com/vinirmbrozz/truther-contracts/sdk/go v0.0.0

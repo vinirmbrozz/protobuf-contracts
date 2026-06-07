@@ -99,6 +99,13 @@ jobs:
         with:
           go-version: '1.21'
 
+      - name: Tidy Go module
+        # go mod tidy ensures go.mod/go.sum are consistent with Go 1.21 before testing.
+        # sdk/go declares go 1.21, so interop/go must match; tidy syncs any residual diff
+        # between the locally-generated go.sum (Go 1.19) and the CI toolchain (Go 1.21).
+        working-directory: interop/go
+        run: go mod tidy
+
       - name: Run Go interop tests
         # interop/go is a nested Go module (own go.mod); run from inside it.
         working-directory: interop/go
