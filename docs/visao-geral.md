@@ -52,11 +52,13 @@ Princípio: **evolução aditiva + BACKWARD** (schema novo lê dado escrito pelo
 - `BACKWARD` ligado globalmente. **`PLAINTEXT`, sem auth** — é dev; segurança é assunto de prod (ver Segurança).
 
 ## 5. Harness de interop
-Prova que Go/Node/Python falam **o mesmo contrato byte a byte**.
-- `interop/harness.js` — implementação de **referência** em Node, roda hoje sem Kafka (SR mockado).
-- **Fixtures compartilhadas** (`fixtures/*.hex`): cada linguagem desmonta **os mesmos bytes** → prova
-  "nós nos entendemos" (round-trip isolado só prova "eu me entendo").
-- Hoje: Node↔Node ✅; Go/Python ficam verdes quando as libs (ROD-15/16/17) e fixtures forem ligadas.
+Prova que Go/Node/Python falam **o mesmo contrato byte a byte** — contra um **Schema Registry real**.
+- Um **CLI por linguagem** (`interop/cli.js`, `interop/go/main.go`, `interop/python/cli.py`) usa o
+  SDK da própria linguagem (`bind`/`produce`/`consume`).
+- O **orquestrador** (`interop/orchestrate.mjs`) roda a matriz **3×3**: cada linguagem **produz** um
+  frame e as três **consomem+verificam** — o `schema_id` é resolvido em runtime (sem fixture fixa).
+- Hoje: **9/9 verde** (Go↔Node↔Python), frames byte-idênticos. Roda no CI (`buf-ci.yml`, job
+  `interop`) subindo Kafka+SR via `docker compose`.
 
 ## 6. O `proto` em si
 `proto/transaction.proto` é um **exemplo/seed** (não a estrutura final). Anatomia: `message` = struct;

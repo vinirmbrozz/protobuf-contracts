@@ -11,6 +11,20 @@
 
 ---
 
+## Dois conceitos que aparecem já no diagrama
+
+- **serde** (serializer + deserializer): a camada que **transforma a mensagem (objeto) em bytes**
+  para enviar ao Kafka e os **bytes de volta em objeto** ao receber. Aqui o serde também **embrulha/
+  desembrulha o envelope Confluent** (magic byte + `schema_id` + índice + payload) e valida no consumo.
+  É o que cada SDK entrega pronto — o serviço só chama `produce`/`consume`.
+
+- **descriptor**: a **descrição da estrutura** da mensagem (campos, tipos, ordem de declaração) que o
+  `protoc`/`buf` **embute no código gerado**. É a partir dele que o SDK sabe, de forma genérica, qual o
+  índice de cada mensagem e como (de)serializar — **sem precisar ler o `.proto` em runtime**. (No Node,
+  como o gerador não embute o descriptor, embutimos um `FileDescriptorSet` para ter a mesma informação.)
+
+---
+
 ## A ideia em um diagrama
 
 ```mermaid

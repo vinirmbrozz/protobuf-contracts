@@ -1,109 +1,98 @@
-# @truther/kafka-serde
+# @truther/contracts
 
-Confluent Schema Registry serde library for Truther Kafka messages.
+Generated Protobuf types + Confluent Schema Registry serde for Node/TypeScript.
 
-Implements the wire format defined in [`docs/confluent-sr-serde-spec.md`](../../docs/confluent-sr-serde-spec.md):
+The SDK is **thin**: it never reads a `.proto` and never registers schemas. It
+**resolves** the `schema_id` from the Schema Registry, frames the Confluent
+envelope, and validates strictly on consume. Wire format
+([spec](../../docs/confluent-sr-serde-spec.md)):
 
 ```
-[0x00 magic] [schema_id: 4 bytes BE] [0x00 msg-index] [proto3 payload]
+[0x00 magic] [schema_id: 4 bytes BE] [message-index] [proto3 payload]
 ```
 
-## Stack
-
-- **Kafka client**: KafkaJS (bring your own)
-- **Schema Registry**: Confluent SR REST API (via native Node 18+ `fetch`)
-- **Subject naming**: TopicNameStrategy — `<topic>-value`
-- **Compatibility**: BACKWARD (set globally in docker-compose)
+`message-index` is variable length (derived from the type's descriptor) — generic
+for any message, no per-contract code.
 
 ## Configuration
 
-| Env var                    | Default                  | Description           |
-|----------------------------|--------------------------|-----------------------|
-| `SCHEMA_REGISTRY_URL`      | `http://localhost:8081`  | SR base URL           |
-| `SCHEMA_REGISTRY_API_KEY`  | _(none)_                 | SR API key (prod)     |
-| `SCHEMA_REGISTRY_API_SECRET` | _(none)_               | SR API secret (prod)  |
+| Env var | Default | Description |
+|---|---|---|
+| `SCHEMA_REGISTRY_URL` | `http://localhost:8081` | SR base URL |
+| `SCHEMA_REGISTRY_API_KEY` | _(none)_ | SR API key (authenticated SR) |
+| `SCHEMA_REGISTRY_API_SECRET` | _(none)_ | SR API secret |
 
-## Installation
+## Install
 
 ```bash
-npm install file:./packages/kafka-serde
+npm install @truther/contracts          # published
+# or, from a checkout of this repo:
+npm install file:../truther-contracts/sdk/node
 ```
 
 ## Quick start
 
-```typescript
-import { TrutherSerde } from '@truther/kafka-serde';
-import { Transaction } from '@truther/contracts-sdk'; // or gen/node JSPB variant
-import { readFileSync } from 'fs';
+```ts
+import { TrutherSerde, Transaction } from '@truther/contracts';
 
-// 1. Instantiate — reads SR URL from SCHEMA_REGISTRY_URL env var
-const serde = new TrutherSerde();
+const serde = new TrutherSerde();                  // reads SCHEMA_REGISTRY_URL
+await serde.bind('transactions', Transaction);     // resolves the schema_id from SR
 
-// 2. At startup: register schema(s) eagerly
-const protoContent = readFileSync('./proto/transaction.proto', 'utf8');
-await serde.registerSchema('transactions', protoContent);
+// Produce
+const framed = serde.produce('transactions', Transaction.fromPartial({
+  transactionAmount: '9.99',
+  finalDecision: 'APPROVED',
+}));
+await kafkaProducer.send({ topic: 'transactions', messages: [{ value: framed }] });
 
-// 3. Codec adapter (ts-proto example)
-const TransactionCodec = {
-  encode: (msg: Transaction) => Transaction.encode(msg).finish(),
-  decode: (bytes: Uint8Array) => Transaction.decode(bytes),
-};
-
-// 4. Produce: serialize + frame → Buffer
-const tx: Transaction = { transactionAmount: '9.99', finalDecision: 'APPROVED', predictiveAnalyzer: undefined };
-const buf = serde.produce('transactions', tx, TransactionCodec);
-await kafkaProducer.send({ topic: 'transactions', messages: [{ value: buf }] });
-
-// 5. Consume: validate + deframe + deserialize → typed message
-const decoded = await serde.consume('transactions', rawKafkaValue, TransactionCodec);
+// Consume — throws SerdeError on a bad payload → route to DLQ
+const tx = await serde.consume('transactions', rawKafkaValue);
 ```
+
+> The schema must already be registered in the Registry (by the contracts repo's
+> registrador). The SDK only reads it.
 
 ## API
 
 ### `new TrutherSerde(options?)`
+`{ srUrl?, srApiKey?, srApiSecret? }` — each falls back to the matching env var.
 
-| Option      | Type   | Description                          |
-|-------------|--------|--------------------------------------|
-| `srUrl`     | string | Override SR URL (env var fallback)   |
-| `srApiKey`  | string | Override SR API key                  |
-| `srApiSecret` | string | Override SR API secret             |
+### `serde.bind(topic, Codec): Promise<void>`
+Map a topic to its message type and resolve its `schema_id` from SR (subject
+`<topic>-value`, latest version). Read-only; fails fast if the subject isn't
+registered. Call once per topic at startup. `serde.startup({ topic: Codec, ... })`
+binds many at once.
 
-### `serde.registerSchema(topic, protoContent): Promise<number>`
+### `serde.produce(topic, msg): Buffer`
+Serialize `msg` and wrap it in the Confluent envelope (cached `schema_id` + correct
+`message-index`). Throws if the topic wasn't bound.
 
-Register a PROTOBUF schema under `<topic>-value`. Returns the schema ID. Call at startup for each topic you produce to. Idempotent.
-
-### `serde.produce<T>(topic, msg, codec): Buffer`
-
-Serialize `msg` using `codec.encode` and frame it in the Confluent envelope. Throws if `registerSchema` was not called for `topic`.
-
-### `serde.consume<T>(topic, data, codec): Promise<T>`
-
-Validate the Confluent envelope, verify the schema ID against SR, and decode using `codec.decode`. Throws `SerdeError` on any rejection — callers must route to the dead-letter topic `<topic>-dead-letter`.
+### `serde.consume(topic, data): Promise<T>`
+Validate the envelope and deserialize into the bound type. Throws `SerdeError` on:
+wrong magic byte, short frame, a `schema_id` that isn't a registered version of the
+topic's subject, a `message-index` mismatch, or a decode failure. Route to the DLQ.
 
 ### `SerdeError`
-
-```typescript
+```ts
 class SerdeError extends Error {
-  code: 'INVALID_MAGIC_BYTE' | 'UNKNOWN_SCHEMA_ID' | 'DESERIALIZATION_ERROR';
+  code:
+    | 'INVALID_MAGIC_BYTE' | 'FRAME_TOO_SHORT' | 'TOPIC_NOT_BOUND'
+    | 'SCHEMA_FOREIGN' | 'MESSAGE_INDEX_MISMATCH' | 'DESERIALIZATION_ERROR';
   rawPayload?: Buffer;
 }
 ```
 
-## Running tests
+## Tests
 
 ```bash
-# Unit tests (no external services)
-npm test
-
-# Integration tests (requires docker-compose stack)
-docker-compose up -d schema-registry
-npm run test:integration
+npm test                 # unit (mock SR, no infra)
+# integration (real SR): docker compose up -d && register schemas, then:
+SCHEMA_REGISTRY_URL=http://localhost:8081 npm run test:integration
 ```
 
 ## Adding a new contract
 
-1. Add your message to `proto/`.
-2. Run `buf generate` to regenerate `gen/node/` and `gen/typescript/`.
-3. Create a codec adapter for the new type.
-4. Call `serde.registerSchema('<your-new-topic>', protoContent)` at startup.
-5. Add unit tests for the new codec.
+Add the message to `proto/` and run `buf generate` — the SDK regenerates (types +
+descriptor) and handles the new message generically. Register it in the Registry
+(`scripts/register_schemas.py`), then `bind('<topic>', NewType)` in your service.
+No per-contract SDK code.
