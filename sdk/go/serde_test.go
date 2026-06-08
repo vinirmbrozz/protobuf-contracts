@@ -1,383 +1,295 @@
-// Package serde_test — unit and integration tests for the Confluent SR serde library.
+// Package serde_test — unit tests for the thin Confluent SR serde.
 //
-// Tests use net/http/httptest to simulate the Confluent Schema Registry REST API.
-// No real Kafka or SR instance is required.
+// The SDK only READS the Schema Registry (resolve id at Bind, validate id at
+// Consume). These tests simulate SR with net/http/httptest serving:
+//   - GET /subjects/{subject}/versions/latest      → {"id": N}
+//   - GET /schemas/ids/{id}/versions               → [{"subject","version"}]
+// No real Kafka/SR required; the end-to-end test against a real SR lives apart.
 package serde_test
 
 import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
-	"github.com/vinirmbrozz/truther-contracts/sdk/go"
+	serde "github.com/vinirmbrozz/truther-contracts/sdk/go"
+	txpb "github.com/vinirmbrozz/truther-contracts/sdk/go/proto"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-// mockSchemaRegistry returns an httptest.Server that simulates Confluent SR.
-// It auto-increments schema IDs and returns 404 for IDs not yet registered.
-func mockSchemaRegistry(t *testing.T) *httptest.Server {
-	t.Helper()
-	var mu sync.Mutex
-	registered := make(map[string]int) // subject → ID
-	var nextID atomic.Int32
+// mockSR serves a read-only Confluent SR seeded with subject→id. idVersions is
+// the optional reverse view (id → subjects) used by the id-validation endpoint;
+// when nil it is derived from subjectID. idVersionCalls counts validation hits.
+type mockSR struct {
+	*httptest.Server
+	idVersionCalls atomic.Int32
+}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func newMockSR(t *testing.T, subjectID map[string]int) *mockSR {
+	t.Helper()
+	m := &mockSR{}
+	m.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		parts := strings.Split(r.URL.Path, "/") // leading "" element
 
 		switch {
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/versions"):
-			// POST /subjects/{subject}/versions — register or return existing schema ID
-			parts := strings.SplitN(r.URL.Path, "/", 4) // ["", "subjects", "{subject}", "versions"]
-			if len(parts) < 4 {
-				http.Error(w, "bad path", http.StatusBadRequest)
-				return
-			}
+		// GET /subjects/{subject}/versions/latest
+		case len(parts) == 5 && parts[1] == "subjects" && parts[3] == "versions" && parts[4] == "latest":
 			subject := parts[2]
-
-			mu.Lock()
-			id, exists := registered[subject]
-			if !exists {
-				id = int(nextID.Add(1))
-				registered[subject] = id
-			}
-			mu.Unlock()
-
-			_ = json.NewEncoder(w).Encode(map[string]int{"id": id})
-
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/schemas/ids/"):
-			// GET /schemas/ids/{id} — return schema or 404
-			var id int
-			if _, err := fmt.Sscanf(r.URL.Path, "/schemas/ids/%d", &id); err != nil {
-				http.Error(w, "bad id", http.StatusBadRequest)
+			if id, ok := subjectID[subject]; ok {
+				_ = json.NewEncoder(w).Encode(map[string]int{"id": id})
 				return
 			}
+			w.WriteHeader(http.StatusNotFound)
 
-			mu.Lock()
-			found := false
-			for _, regID := range registered {
-				if regID == id {
-					found = true
-					break
+		// GET /schemas/ids/{id}/versions
+		case len(parts) == 5 && parts[1] == "schemas" && parts[2] == "ids" && parts[4] == "versions":
+			m.idVersionCalls.Add(1)
+			id, _ := strconv.Atoi(parts[3])
+			var out []map[string]any
+			for subject, sid := range subjectID {
+				if sid == id {
+					out = append(out, map[string]any{"subject": subject, "version": 1})
 				}
 			}
-			mu.Unlock()
-
-			if found {
-				_ = json.NewEncoder(w).Encode(map[string]string{"schema": "stub", "schemaType": "PROTOBUF"})
-			} else {
+			if len(out) == 0 {
 				w.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"error_code": 40403,
-					"message":    "Schema not found",
-				})
+				return
 			}
+			_ = json.NewEncoder(w).Encode(out)
 
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-
-	t.Cleanup(srv.Close)
-	return srv
+	t.Cleanup(m.Close)
+	return m
 }
 
-func newTestSerde(t *testing.T, srv *httptest.Server) *serde.Serde {
+func newSerde(t *testing.T, m *mockSR) *serde.Serde {
 	t.Helper()
-	return serde.NewWithConfig(serde.Config{SRURL: srv.URL})
+	return serde.NewWithConfig(serde.Config{SRURL: m.URL})
 }
 
-// ── Framing correctness ──────────────────────────────────────────────────────
+func sampleTx() *txpb.Transaction {
+	return &txpb.Transaction{
+		TransactionAmount:  "9.99",
+		FinalDecision:      "APPROVED",
+		PredictiveAnalyzer: &txpb.PredictiveAnalyzer{IsAllowed: true, Reason: "ok", CardId: "card-1"},
+	}
+}
 
-// TestFrameRoundTrip is the primary TDD test: encode → decode produces identical
-// message, and the Confluent header bytes are correct.
-func TestFrameRoundTrip(t *testing.T) {
-	srv := mockSchemaRegistry(t)
-	s := newTestSerde(t, srv)
-	s.RegisterType("test", &wrapperspb.StringValue{}, "")
+// frame builds a Confluent envelope by hand for negative tests.
+func frame(id uint32, msgIndex, payload []byte) []byte {
+	f := []byte{0x00}
+	f = binary.BigEndian.AppendUint32(f, id)
+	f = append(f, msgIndex...)
+	return append(f, payload...)
+}
 
-	original := wrapperspb.String("hello Truther")
+// ── Round-trip + envelope correctness ───────────────────────────────────────
 
-	framed, err := s.Produce("test", original)
+// Transaction is the 2nd message in the file (index 1) → exercises the
+// variable-length message-index path, NOT the 0x00 optimization.
+func TestRoundTripTransaction(t *testing.T) {
+	m := newMockSR(t, map[string]int{"transactions-value": 42})
+	s := newSerde(t, m)
+	if err := s.Bind("transactions", &txpb.Transaction{}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	original := sampleTx()
+	framed, err := s.Produce("transactions", original)
 	if err != nil {
 		t.Fatalf("Produce: %v", err)
 	}
 
-	// Validate Confluent header structure
-	if len(framed) < 6 {
-		t.Fatalf("framed len %d < 6", len(framed))
-	}
 	if framed[0] != 0x00 {
-		t.Errorf("magic byte: got 0x%02x, want 0x00", framed[0])
+		t.Errorf("magic: got 0x%02x want 0x00", framed[0])
 	}
-	schemaID := binary.BigEndian.Uint32(framed[1:5])
-	if schemaID == 0 {
-		t.Error("schema ID is 0; expected a non-zero value from SR")
+	if id := binary.BigEndian.Uint32(framed[1:5]); id != 42 {
+		t.Errorf("schema_id: got %d want 42", id)
 	}
-	if framed[5] != 0x00 {
-		t.Errorf("message index byte: got 0x%02x, want 0x00 (first message convention)", framed[5])
+	// index 1 → zig-zag varint(count=1)=0x02, varint(index=1)=0x02
+	if got := framed[5:7]; got[0] != 0x02 || got[1] != 0x02 {
+		t.Errorf("msg-index: got % x want 02 02", got)
 	}
 
-	// Roundtrip
-	msg, err := s.Consume("test", framed)
+	got, err := s.Consume("transactions", framed)
 	if err != nil {
 		t.Fatalf("Consume: %v", err)
 	}
-	got, ok := msg.(*wrapperspb.StringValue)
-	if !ok {
-		t.Fatalf("Consume returned %T, want *wrapperspb.StringValue", msg)
-	}
 	if !proto.Equal(original, got) {
-		t.Errorf("roundtrip mismatch: got %q, want %q", got.Value, original.Value)
+		t.Errorf("roundtrip mismatch: got %v", got)
 	}
 }
 
-// ── Invalid payload rejection (SPEC §4.3) ───────────────────────────────────
+// PredictiveAnalyzer is the 1st message (index 0) → the single-byte 0x00 path.
+func TestRoundTripIndexZero(t *testing.T) {
+	m := newMockSR(t, map[string]int{"predictions-value": 7})
+	s := newSerde(t, m)
+	if err := s.Bind("predictions", &txpb.PredictiveAnalyzer{}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	framed, err := s.Produce("predictions", &txpb.PredictiveAnalyzer{IsAllowed: true})
+	if err != nil {
+		t.Fatalf("Produce: %v", err)
+	}
+	// index 0 → single 0x00 byte, payload starts at offset 6
+	if framed[5] != 0x00 {
+		t.Errorf("msg-index byte: got 0x%02x want 0x00", framed[5])
+	}
+	if _, err := s.Consume("predictions", framed); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+}
+
+// ── Bind / not-bound ────────────────────────────────────────────────────────
+
+func TestBindFailsWhenSubjectMissing(t *testing.T) {
+	m := newMockSR(t, map[string]int{}) // nothing registered
+	s := newSerde(t, m)
+	if err := s.Bind("transactions", &txpb.Transaction{}); err == nil {
+		t.Fatal("expected Bind to fail when subject is not registered")
+	}
+}
+
+func TestProduceConsumeUnbound(t *testing.T) {
+	m := newMockSR(t, map[string]int{"transactions-value": 42})
+	s := newSerde(t, m)
+	if _, err := s.Produce("transactions", sampleTx()); !errors.Is(err, serde.ErrTopicNotBound) {
+		t.Errorf("Produce unbound: want ErrTopicNotBound, got %v", err)
+	}
+	if _, err := s.Consume("transactions", []byte{0x00, 0, 0, 0, 42, 0x02, 0x02, 0x00}); !errors.Is(err, serde.ErrTopicNotBound) {
+		t.Errorf("Consume unbound: want ErrTopicNotBound, got %v", err)
+	}
+}
+
+// ── Security: consumer rejections ───────────────────────────────────────────
 
 func TestConsumeInvalidMagicByte(t *testing.T) {
-	srv := mockSchemaRegistry(t)
-	s := newTestSerde(t, srv)
-	s.RegisterType("test", &wrapperspb.StringValue{}, "")
+	m := newMockSR(t, map[string]int{"transactions-value": 42})
+	s := newSerde(t, m)
+	_ = s.Bind("transactions", &txpb.Transaction{})
 
-	bad := []byte{0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x0a, 0x03}
-	_, err := s.Consume("test", bad)
-	if err == nil {
-		t.Fatal("expected error for invalid magic byte, got nil")
-	}
-	if !errors.Is(err, serde.ErrInvalidMagicByte) {
-		t.Errorf("want ErrInvalidMagicByte, got: %v", err)
+	bad := []byte{0x01, 0x00, 0x00, 0x00, 0x2a, 0x02, 0x02, 0x0a}
+	if _, err := s.Consume("transactions", bad); !errors.Is(err, serde.ErrInvalidMagicByte) {
+		t.Errorf("want ErrInvalidMagicByte, got %v", err)
 	}
 }
 
 func TestConsumeFrameTooShort(t *testing.T) {
-	srv := mockSchemaRegistry(t)
-	s := newTestSerde(t, srv)
+	m := newMockSR(t, map[string]int{"transactions-value": 42})
+	s := newSerde(t, m)
+	_ = s.Bind("transactions", &txpb.Transaction{})
 
-	cases := []struct {
-		name string
-		data []byte
-	}{
-		{"empty", []byte{}},
-		{"1 byte", []byte{0x00}},
-		{"3 bytes", []byte{0x00, 0x00, 0x00}},
-		{"5 bytes", []byte{0x00, 0x00, 0x00, 0x00, 0x01}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := s.Consume("test", tc.data)
-			if err == nil {
-				t.Fatal("expected error for short frame, got nil")
-			}
-			if !errors.Is(err, serde.ErrFrameTooShort) {
-				t.Errorf("want ErrFrameTooShort, got: %v", err)
-			}
-		})
+	for _, data := range [][]byte{{}, {0x00}, {0x00, 0, 0, 0}, {0x00, 0, 0, 0, 42}} {
+		if _, err := s.Consume("transactions", data); !errors.Is(err, serde.ErrFrameTooShort) {
+			t.Errorf("len=%d: want ErrFrameTooShort, got %v", len(data), err)
+		}
 	}
 }
 
-func TestConsumeUnknownSchemaID(t *testing.T) {
-	srv := mockSchemaRegistry(t)
-	s := newTestSerde(t, srv)
-	s.RegisterType("test", &wrapperspb.StringValue{}, "")
+// schema_id that belongs to a DIFFERENT subject must be rejected (the core
+// security tightening: not "exists somewhere" but "version of THIS subject").
+func TestConsumeForeignSubjectID(t *testing.T) {
+	m := newMockSR(t, map[string]int{
+		"transactions-value": 42,
+		"other-value":        99, // id 99 exists, but under another subject
+	})
+	s := newSerde(t, m)
+	_ = s.Bind("transactions", &txpb.Transaction{})
 
-	// Manually build a frame with schemaID=999 which was never registered
-	frame := make([]byte, 7)
-	frame[0] = 0x00
-	binary.BigEndian.PutUint32(frame[1:5], 999)
-	frame[5] = 0x00
-	frame[6] = 0x00 // zero payload byte
-
-	_, err := s.Consume("test", frame)
-	if err == nil {
-		t.Fatal("expected error for unknown schema ID, got nil")
+	payload, _ := proto.Marshal(sampleTx())
+	bad := frame(99, []byte{0x02, 0x02}, payload) // valid envelope, wrong subject's id
+	if _, err := s.Consume("transactions", bad); !errors.Is(err, serde.ErrSchemaForeign) {
+		t.Errorf("want ErrSchemaForeign, got %v", err)
 	}
-	// Must not panic — return an explicit error
 }
 
-func TestConsumeNoRegisteredType(t *testing.T) {
-	srv := mockSchemaRegistry(t)
-	s := newTestSerde(t, srv)
+func TestConsumeUnknownID(t *testing.T) {
+	m := newMockSR(t, map[string]int{"transactions-value": 42})
+	s := newSerde(t, m)
+	_ = s.Bind("transactions", &txpb.Transaction{})
 
-	// Produce on "registered" to create a valid framed payload
-	s.RegisterType("registered", &wrapperspb.StringValue{}, "")
-	framed, err := s.Produce("registered", wrapperspb.String("x"))
-	if err != nil {
-		t.Fatalf("Produce: %v", err)
+	payload, _ := proto.Marshal(sampleTx())
+	bad := frame(12345, []byte{0x02, 0x02}, payload) // id never registered (404)
+	if _, err := s.Consume("transactions", bad); !errors.Is(err, serde.ErrSchemaForeign) {
+		t.Errorf("want ErrSchemaForeign, got %v", err)
 	}
+}
 
-	// Consume on a different topic with no RegisterType call → error
-	_, err = s.Consume("unregistered", framed)
-	if err == nil {
-		t.Fatal("expected error for unregistered topic, got nil")
+func TestConsumeMessageIndexMismatch(t *testing.T) {
+	m := newMockSR(t, map[string]int{"transactions-value": 42})
+	s := newSerde(t, m)
+	_ = s.Bind("transactions", &txpb.Transaction{}) // expects index 1
+
+	payload, _ := proto.Marshal(sampleTx())
+	bad := frame(42, []byte{0x00}, payload) // index 0, but bound type is index 1
+	if _, err := s.Consume("transactions", bad); !errors.Is(err, serde.ErrMessageIndexMismatch) {
+		t.Errorf("want ErrMessageIndexMismatch, got %v", err)
 	}
 }
 
 func TestConsumeInvalidPayload(t *testing.T) {
-	srv := mockSchemaRegistry(t)
-	s := newTestSerde(t, srv)
-	s.RegisterType("test", &wrapperspb.StringValue{}, "")
+	m := newMockSR(t, map[string]int{"transactions-value": 42})
+	s := newSerde(t, m)
+	_ = s.Bind("transactions", &txpb.Transaction{})
 
-	// Produce to register schema and obtain a valid schemaID
-	framed, err := s.Produce("test", wrapperspb.String("seed"))
-	if err != nil {
-		t.Fatalf("Produce: %v", err)
-	}
-
-	// Replace the proto3 payload with invalid wire bytes (must not panic)
-	corrupt := make([]byte, len(framed))
-	copy(corrupt, framed)
-	for i := 6; i < len(corrupt); i++ {
-		corrupt[i] = 0xFF // invalid protobuf wire type 7 on field 31
-	}
-
-	_, err = s.Consume("test", corrupt)
-	if err == nil {
-		t.Fatal("expected unmarshal error for corrupt payload, got nil")
+	bad := frame(42, []byte{0x02, 0x02}, []byte{0xFF, 0xFF, 0xFF}) // invalid proto wire
+	if _, err := s.Consume("transactions", bad); !errors.Is(err, serde.ErrDeserialize) {
+		t.Errorf("want ErrDeserialize, got %v", err)
 	}
 }
 
-// ── Schema Registry integration (mock SR) ───────────────────────────────────
+// ── Caching: id validation hits SR once per id ──────────────────────────────
 
-// TestSchemaCachedAfterFirstProduce verifies that the SR is called exactly once
-// per topic even across multiple Produce calls (eager-register + cache, SPEC §4.1).
-func TestSchemaCachedAfterFirstProduce(t *testing.T) {
-	var registerCalls atomic.Int32
+func TestSchemaIDValidationCached(t *testing.T) {
+	m := newMockSR(t, map[string]int{"transactions-value": 42})
+	s := newSerde(t, m)
+	_ = s.Bind("transactions", &txpb.Transaction{})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/versions"):
-			registerCalls.Add(1)
-			_ = json.NewEncoder(w).Encode(map[string]int{"id": 1})
-		case r.Method == http.MethodGet:
-			_ = json.NewEncoder(w).Encode(map[string]string{"schema": "stub"})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	s := serde.NewWithConfig(serde.Config{SRURL: srv.URL})
-	s.RegisterType("test", &wrapperspb.StringValue{}, "")
-
-	for i := 0; i < 5; i++ {
-		if _, err := s.Produce("test", wrapperspb.String("msg")); err != nil {
-			t.Fatalf("Produce[%d]: %v", i, err)
+	framed, _ := s.Produce("transactions", sampleTx())
+	for i := 0; i < 4; i++ {
+		if _, err := s.Consume("transactions", framed); err != nil {
+			t.Fatalf("Consume[%d]: %v", i, err)
 		}
 	}
-
-	if n := registerCalls.Load(); n != 1 {
-		t.Errorf("SR registration called %d times, want exactly 1", n)
+	if n := m.idVersionCalls.Load(); n != 1 {
+		t.Errorf("id-validation hit SR %d times, want 1 (cached)", n)
 	}
 }
 
-// TestTopicNameStrategy verifies that the SR subject is "<topic>-value".
-func TestTopicNameStrategy(t *testing.T) {
-	var registeredSubjects []string
-	var mu sync.Mutex
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/versions") {
-			parts := strings.SplitN(r.URL.Path, "/", 4)
-			if len(parts) >= 3 {
-				mu.Lock()
-				registeredSubjects = append(registeredSubjects, parts[2])
-				mu.Unlock()
-			}
-			_ = json.NewEncoder(w).Encode(map[string]int{"id": 1})
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	s := serde.NewWithConfig(serde.Config{SRURL: srv.URL})
-	s.RegisterType("transactions", &wrapperspb.StringValue{}, "")
-	if _, err := s.Produce("transactions", wrapperspb.String("x")); err != nil {
-		t.Fatalf("Produce: %v", err)
-	}
-
-	mu.Lock()
-	subjects := registeredSubjects
-	mu.Unlock()
-
-	if len(subjects) == 0 {
-		t.Fatal("no SR registration call received")
-	}
-	if subjects[0] != "transactions-value" {
-		t.Errorf("subject: got %q, want %q", subjects[0], "transactions-value")
-	}
-}
-
-// TestProduceConsumeMultipleTopics verifies that distinct topics get distinct
-// schema IDs and their messages roundtrip correctly.
-func TestProduceConsumeMultipleTopics(t *testing.T) {
-	srv := mockSchemaRegistry(t)
-	s := newTestSerde(t, srv)
-	s.RegisterType("topic-a", &wrapperspb.StringValue{}, "")
-	s.RegisterType("topic-b", &wrapperspb.Int32Value{}, "")
-
-	framedA, err := s.Produce("topic-a", wrapperspb.String("hello"))
-	if err != nil {
-		t.Fatalf("Produce topic-a: %v", err)
-	}
-	framedB, err := s.Produce("topic-b", wrapperspb.Int32(42))
-	if err != nil {
-		t.Fatalf("Produce topic-b: %v", err)
-	}
-
-	idA := binary.BigEndian.Uint32(framedA[1:5])
-	idB := binary.BigEndian.Uint32(framedB[1:5])
-	if idA == idB {
-		t.Errorf("both topics got the same schema ID %d; expected distinct IDs", idA)
-	}
-
-	msgA, err := s.Consume("topic-a", framedA)
-	if err != nil {
-		t.Fatalf("Consume topic-a: %v", err)
-	}
-	if v := msgA.(*wrapperspb.StringValue).Value; v != "hello" {
-		t.Errorf("topic-a: got %q, want \"hello\"", v)
-	}
-
-	msgB, err := s.Consume("topic-b", framedB)
-	if err != nil {
-		t.Fatalf("Consume topic-b: %v", err)
-	}
-	if v := msgB.(*wrapperspb.Int32Value).Value; v != 42 {
-		t.Errorf("topic-b: got %d, want 42", v)
-	}
-}
-
-// ── New() env-var wiring ─────────────────────────────────────────────────────
+// ── New() env wiring ─────────────────────────────────────────────────────────
 
 func TestNewFailsWithoutSRURL(t *testing.T) {
 	t.Setenv("SCHEMA_REGISTRY_URL", "")
-	_, err := serde.New()
-	if err == nil {
-		t.Fatal("expected error when SCHEMA_REGISTRY_URL is empty, got nil")
+	if _, err := serde.New(); err == nil {
+		t.Fatal("expected error when SCHEMA_REGISTRY_URL is empty")
 	}
 }
 
-func TestNewReadsSchemaRegistryURL(t *testing.T) {
-	srv := mockSchemaRegistry(t)
-	t.Setenv("SCHEMA_REGISTRY_URL", srv.URL)
-
-	s, err := serde.New()
+func TestStartupBindsAll(t *testing.T) {
+	m := newMockSR(t, map[string]int{"transactions-value": 42, "predictions-value": 7})
+	s := newSerde(t, m)
+	err := s.Startup(map[string]proto.Message{
+		"transactions": &txpb.Transaction{},
+		"predictions":  &txpb.PredictiveAnalyzer{},
+	})
 	if err != nil {
-		t.Fatalf("New(): %v", err)
+		t.Fatalf("Startup: %v", err)
 	}
-
-	s.RegisterType("test", &wrapperspb.StringValue{}, "")
-	if _, err := s.Produce("test", wrapperspb.String("ok")); err != nil {
-		t.Fatalf("Produce: %v", err)
+	if _, err := s.Produce("transactions", sampleTx()); err != nil {
+		t.Errorf("Produce transactions: %v", err)
+	}
+	if _, err := s.Produce("predictions", &txpb.PredictiveAnalyzer{}); err != nil {
+		t.Errorf("Produce predictions: %v", err)
 	}
 }

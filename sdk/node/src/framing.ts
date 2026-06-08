@@ -1,49 +1,124 @@
 /**
- * Confluent Schema Registry wire-format framing — §2 of docs/confluent-sr-serde-spec.md.
+ * Confluent Schema Registry wire-format framing.
  *
- * Wire layout (6-byte header + proto payload):
- *   [0x00] [schema_id: 4 bytes BE] [0x00 msg-index] [proto3 payload]
+ * Wire layout:
+ *   [0x00 magic] [schema_id: 4 bytes BE] [message-index array] [proto3 payload]
+ *
+ * The message-index array is variable length (Confluent encoding): a single
+ * top-level message at index 0 is the 1-byte optimization 0x00; otherwise it is
+ * zig-zag varints — the count, then each index. The index identifies which
+ * message of the schema's .proto this payload is (declaration order).
  */
 
 export const MAGIC_BYTE = 0x00;
-const HEADER_LENGTH = 6;
 
-/**
- * Wrap serialized proto bytes in the Confluent SR envelope.
- * The message-index byte is always 0x00 (first/only message per schema subject,
- * per Truther convention — see spec §2.3).
- */
-export function frameMessage(schemaId: number, msgBytes: Uint8Array): Buffer {
-  const out = Buffer.allocUnsafe(HEADER_LENGTH + msgBytes.length);
-  out[0] = MAGIC_BYTE;
-  out.writeUInt32BE(schemaId >>> 0, 1); // unsigned 32-bit big-endian
-  out[5] = 0x00;                        // message index
-  Buffer.from(msgBytes).copy(out, HEADER_LENGTH);
-  return out;
+export type FrameErrorCode = 'INVALID_MAGIC_BYTE' | 'FRAME_TOO_SHORT';
+
+/** Thrown by parseFrame on a malformed envelope; serde maps it to a SerdeError. */
+export class FrameError extends Error {
+  readonly code: FrameErrorCode;
+  constructor(message: string, code: FrameErrorCode) {
+    super(message);
+    this.name = 'FrameError';
+    this.code = code;
+  }
 }
 
 /** Parsed Confluent SR envelope. */
 export interface ParsedFrame {
   schemaId: number;
-  msgBytes: Buffer;
+  /** message-index path (declaration order); top-level messages → single element */
+  indexes: number[];
+  payload: Buffer;
 }
 
 /**
- * Strip the Confluent SR envelope from a raw Kafka message value.
- * Throws on invalid magic byte or undersized frame — callers must route to DLQ.
+ * Encode the Confluent message-index array. The common case [0] (first message)
+ * is the 1-byte optimization 0x00.
+ */
+export function encodeMessageIndexes(indexes: number[]): Buffer {
+  if (indexes.length === 1 && indexes[0] === 0) {
+    return Buffer.from([0x00]);
+  }
+  const bytes: number[] = [];
+  appendZigzag(bytes, indexes.length);
+  for (const idx of indexes) appendZigzag(bytes, idx);
+  return Buffer.from(bytes);
+}
+
+/** Build [0x00][schema_id_be4][msg-index][payload]. */
+export function frameMessage(
+  schemaId: number,
+  msgIndexBytes: Buffer,
+  payload: Uint8Array,
+): Buffer {
+  const header = Buffer.allocUnsafe(5);
+  header[0] = MAGIC_BYTE;
+  header.writeUInt32BE(schemaId >>> 0, 1);
+  return Buffer.concat([header, msgIndexBytes, Buffer.from(payload)]);
+}
+
+/**
+ * Strip and validate the Confluent SR envelope. Throws FrameError on a wrong
+ * magic byte or an undersized frame — callers route the raw bytes to the DLQ.
  */
 export function parseFrame(data: Buffer | Uint8Array): ParsedFrame {
   const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-  if (buf.length < HEADER_LENGTH) {
-    throw new Error(`frame too short: ${buf.length} bytes (minimum ${HEADER_LENGTH})`);
+  if (buf.length < 6) {
+    throw new FrameError(`frame too short: ${buf.length} bytes (minimum 6)`, 'FRAME_TOO_SHORT');
   }
   if (buf[0] !== MAGIC_BYTE) {
-    throw new Error(
+    throw new FrameError(
       `invalid magic byte: 0x${buf[0].toString(16).padStart(2, '0')} (expected 0x00)`,
+      'INVALID_MAGIC_BYTE',
     );
   }
-  return {
-    schemaId: buf.readUInt32BE(1),
-    msgBytes: buf.subarray(HEADER_LENGTH),
-  };
+  const schemaId = buf.readUInt32BE(1);
+  const { indexes, next } = readMessageIndexes(buf, 5);
+  return { schemaId, indexes, payload: buf.subarray(next) };
+}
+
+function readMessageIndexes(buf: Buffer, offset: number): { indexes: number[]; next: number } {
+  const first = readZigzag(buf, offset);
+  offset = first.next;
+  if (first.value === 0) {
+    // 1-byte optimization: single index [0]
+    return { indexes: [0], next: offset };
+  }
+  const indexes: number[] = [];
+  for (let i = 0; i < first.value; i++) {
+    const r = readZigzag(buf, offset);
+    indexes.push(r.value);
+    offset = r.next;
+  }
+  return { indexes, next: offset };
+}
+
+function appendZigzag(out: number[], value: number): void {
+  let zz = (value << 1) ^ (value >> 31); // 32-bit zig-zag; indexes are small
+  zz >>>= 0;
+  while (zz >= 0x80) {
+    out.push((zz & 0x7f) | 0x80);
+    zz >>>= 7;
+  }
+  out.push(zz);
+}
+
+function readZigzag(buf: Buffer, offset: number): { value: number; next: number } {
+  let ux = 0;
+  let shift = 0;
+  let n = 0;
+  for (;;) {
+    if (offset + n >= buf.length) {
+      throw new FrameError('truncated message-index varint', 'FRAME_TOO_SHORT');
+    }
+    const b = buf[offset + n];
+    n++;
+    ux |= (b & 0x7f) << shift;
+    if (b < 0x80) break;
+    shift += 7;
+  }
+  ux >>>= 0;
+  const value = (ux >>> 1) ^ -(ux & 1);
+  return { value, next: offset + n };
 }

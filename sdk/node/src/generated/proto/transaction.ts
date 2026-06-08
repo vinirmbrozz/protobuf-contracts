@@ -6,10 +6,12 @@
 
 /* eslint-disable */
 import { BinaryReader, BinaryWriter } from "@bufbuild/protobuf/wire";
+import { messageTypeRegistry } from "../typeRegistry";
 
 export const protobufPackage = "truther.transaction";
 
 export interface PredictiveAnalyzer {
+  $type: "truther.transaction.PredictiveAnalyzer";
   isAllowed: boolean;
   reason: string;
   cardId: string;
@@ -21,6 +23,7 @@ export interface PredictiveAnalyzer {
 }
 
 export interface Transaction {
+  $type: "truther.transaction.Transaction";
   transactionAmount: string;
   predictiveAnalyzer: PredictiveAnalyzer | undefined;
   finalDecision: string;
@@ -28,6 +31,7 @@ export interface Transaction {
 
 function createBasePredictiveAnalyzer(): PredictiveAnalyzer {
   return {
+    $type: "truther.transaction.PredictiveAnalyzer",
     isAllowed: false,
     reason: "",
     cardId: "",
@@ -39,7 +43,9 @@ function createBasePredictiveAnalyzer(): PredictiveAnalyzer {
   };
 }
 
-export const PredictiveAnalyzer: MessageFns<PredictiveAnalyzer> = {
+export const PredictiveAnalyzer: MessageFns<PredictiveAnalyzer, "truther.transaction.PredictiveAnalyzer"> = {
+  $type: "truther.transaction.PredictiveAnalyzer" as const,
+
   encode(message: PredictiveAnalyzer, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.isAllowed !== false) {
       writer.uint32(8).bool(message.isAllowed);
@@ -150,6 +156,7 @@ export const PredictiveAnalyzer: MessageFns<PredictiveAnalyzer> = {
 
   fromJSON(object: any): PredictiveAnalyzer {
     return {
+      $type: PredictiveAnalyzer.$type,
       isAllowed: isSet(object.isAllowed) ? globalThis.Boolean(object.isAllowed) : false,
       reason: isSet(object.reason) ? globalThis.String(object.reason) : "",
       cardId: isSet(object.cardId) ? globalThis.String(object.cardId) : "",
@@ -207,11 +214,20 @@ export const PredictiveAnalyzer: MessageFns<PredictiveAnalyzer> = {
   },
 };
 
+messageTypeRegistry.set(PredictiveAnalyzer.$type, PredictiveAnalyzer);
+
 function createBaseTransaction(): Transaction {
-  return { transactionAmount: "", predictiveAnalyzer: undefined, finalDecision: "" };
+  return {
+    $type: "truther.transaction.Transaction",
+    transactionAmount: "",
+    predictiveAnalyzer: undefined,
+    finalDecision: "",
+  };
 }
 
-export const Transaction: MessageFns<Transaction> = {
+export const Transaction: MessageFns<Transaction, "truther.transaction.Transaction"> = {
+  $type: "truther.transaction.Transaction" as const,
+
   encode(message: Transaction, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.transactionAmount !== "") {
       writer.uint32(10).string(message.transactionAmount);
@@ -267,6 +283,7 @@ export const Transaction: MessageFns<Transaction> = {
 
   fromJSON(object: any): Transaction {
     return {
+      $type: Transaction.$type,
       transactionAmount: isSet(object.transactionAmount) ? globalThis.String(object.transactionAmount) : "",
       predictiveAnalyzer: isSet(object.predictiveAnalyzer)
         ? PredictiveAnalyzer.fromJSON(object.predictiveAnalyzer)
@@ -307,24 +324,27 @@ export const Transaction: MessageFns<Transaction> = {
   },
 };
 
+messageTypeRegistry.set(Transaction.$type, Transaction);
+
 type Builtin = Date | Function | Uint8Array | string | number | boolean | undefined;
 
 export type DeepPartial<T> = T extends Builtin ? T
   : T extends globalThis.Array<infer U> ? globalThis.Array<DeepPartial<U>>
   : T extends ReadonlyArray<infer U> ? ReadonlyArray<DeepPartial<U>>
   : T extends { $case: string } ? { [K in keyof Omit<T, "$case">]?: DeepPartial<T[K]> } & { $case: T["$case"] }
-  : T extends {} ? { [K in keyof T]?: DeepPartial<T[K]> }
+  : T extends {} ? { [K in Exclude<keyof T, "$type">]?: DeepPartial<T[K]> }
   : Partial<T>;
 
 type KeysOfUnion<T> = T extends T ? keyof T : never;
 export type Exact<P, I extends P> = P extends Builtin ? P
-  : P & { [K in keyof P]: Exact<P[K], I[K]> } & { [K in Exclude<keyof I, KeysOfUnion<P>>]: never };
+  : P & { [K in keyof P]: Exact<P[K], I[K]> } & { [K in Exclude<keyof I, KeysOfUnion<P> | "$type">]: never };
 
 function isSet(value: any): boolean {
   return value !== null && value !== undefined;
 }
 
-export interface MessageFns<T> {
+export interface MessageFns<T, V extends string> {
+  readonly $type: V;
   encode(message: T, writer?: BinaryWriter): BinaryWriter;
   decode(input: BinaryReader | Uint8Array, length?: number): T;
   fromJSON(object: any): T;
