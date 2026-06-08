@@ -1,167 +1,273 @@
 # truther-contracts
 
-[![buf CI](https://github.com/vinirmbrozz/truther-contracts/actions/workflows/buf-ci.yml/badge.svg)](https://github.com/vinirmbrozz/truther-contracts/actions/workflows/buf-ci.yml)
+[![CI](https://github.com/vinirmbrozz/truther-contracts/actions/workflows/buf-ci.yml/badge.svg)](https://github.com/vinirmbrozz/truther-contracts/actions/workflows/buf-ci.yml)
 
-## O que é / por quê
+> Repositório central de **contratos de dados**. O `.proto` é a **fonte única**: a partir dele
+> geramos uma **biblioteca (SDK) por linguagem** (Go, Node, Python). Qualquer serviço **importa o
+> SDK** para produzir/consumir mensagens no Kafka — e o **Schema Registry** garante que só trafegue
+> o que está no formato combinado. **Ninguém toca no `.proto` em runtime; ninguém monta o envelope na
+> mão; ninguém registra schema na mão.** Adicionar um contrato novo é só criar um `.proto` e rodar a
+> geração — todos os SDKs se atualizam sozinhos.
 
-`truther-contracts` é o repositório central de contratos de dados da Truther. **Protobuf é a fonte única**: toda estrutura que trafega pelo Kafka é definida em `proto/`, gerada automaticamente para Go, Node e Python via **buf**, e registrada no **Confluent Schema Registry**. Nenhuma mensagem inválida ou não registrada cruza o Kafka — producers e consumers são tipados contra os mesmos schemas compilados e o mesmo envelope de wire format, garantindo interoperabilidade total entre linguagens.
+---
+
+## A ideia em um diagrama
+
+```mermaid
+flowchart TD
+    subgraph SRC["📐 Fonte única"]
+        P["proto/*.proto<br/><i>definição dos contratos</i>"]
+    end
+
+    subgraph BUILD["🏭 Build-time — só aqui o .proto é lido"]
+        BG["buf generate"]
+        REG["scripts/register_schemas.py<br/><i>(registrador)</i>"]
+    end
+
+    subgraph ART["📦 Artefatos versionados"]
+        SDKGO["sdk/go"]
+        SDKNODE["sdk/node (@truther/contracts)"]
+        SDKPY["sdk/python (truther_contracts)"]
+        GEN["gen/ <i>(registro canônico)</i>"]
+    end
+
+    SR["🗄️ Schema Registry<br/><i>autoridade de identidade<br/>e compatibilidade</i>"]
+
+    subgraph RT["🚀 Runtime — serviço só conhece o SDK"]
+        SVC["Serviço (qualquer linguagem)"]
+        K["Kafka topic"]
+        DLQ["DLQ"]
+    end
+
+    P -->|gera tipos + serde + descriptor| BG
+    BG --> SDKGO & SDKNODE & SDKPY & GEN
+    P -->|lê o .proto e registra| REG
+    REG -->|POST schema| SR
+
+    SDKGO & SDKNODE & SDKPY -.importa.-> SVC
+    SVC -->|bind: GET schema_id| SR
+    SVC -->|produce: envelope| K
+    K -->|consume| SVC
+    SVC -.->|valida no SR + rejeita inválido| DLQ
+```
+
+**Em uma frase:** o `.proto` vira SDKs (via `buf generate`) e schemas no Registry (via o registrador);
+o serviço **só importa o SDK** e chama `bind` / `produce` / `consume` — o SDK cuida do envelope e o
+Schema Registry é o porteiro.
+
+---
+
+## O problema que isso resolve
+
+Sem um contrato central, cada serviço reimplementa a (de)serialização das mensagens do Kafka, os
+formatos divergem entre linguagens, e mudanças de schema quebram consumidores silenciosamente. Aqui:
+
+- **Uma definição só** (`proto/`) → tipos idênticos em Go, Node e Python.
+- **Um envelope só** (Confluent Schema Registry) → toda mensagem carrega a identidade do seu schema.
+- **Compatibilidade garantida** → o Registry recusa um schema que quebre os consumidores (regra
+  **BACKWARD**).
+- **Interoperabilidade real** → uma mensagem produzida em Node é consumida byte-a-byte em Go e Python.
+
+---
+
+## O contrato do projeto (os princípios)
+
+1. **O `.proto` é tocado por UMA coisa só: a geração.** `buf generate` produz os SDKs; o registrador
+   lê o `.proto` para registrar o schema. **Nenhum serviço, producer, consumer ou runtime lê `.proto`.**
+2. **O SDK é a única interface.** Cada `sdk/<lang>` é auto-suficiente: tipos gerados + **schema/descriptor
+   embutido** + serde (envelope Confluent) + integração com o Registry.
+3. **O serviço importa o SDK e pronto.** `bind(topic, Tipo)` no startup, depois `produce`/`consume`.
+   O serviço nunca vê schema, `.proto`, descriptor, codec, magic byte, `schema_id` ou payload cru.
+4. **O Schema Registry é a autoridade.** O SDK **resolve** o `schema_id` do Registry (só lê); quem
+   **registra** é o passo de build/ops (o registrador). O Registry garante identidade e compatibilidade.
+
+---
+
+## Como funciona (runtime)
+
+```mermaid
+sequenceDiagram
+    participant Prod as Serviço Produtor
+    participant SDKp as SDK (produtor)
+    participant SR as Schema Registry
+    participant K as Kafka
+    participant SDKc as SDK (consumidor)
+    participant Cons as Serviço Consumidor
+
+    Note over Prod,SR: startup
+    Prod->>SDKp: bind("transactions", Transaction)
+    SDKp->>SR: GET /subjects/transactions-value/versions/latest
+    SR-->>SDKp: { id: 42 }
+
+    Note over Prod,K: produzir
+    Prod->>SDKp: produce("transactions", msg)
+    SDKp->>K: [0x00][id=42][msg-index][payload proto3]
+
+    Note over K,Cons: consumir
+    K->>SDKc: bytes
+    Cons->>SDKc: consume("transactions", bytes)
+    SDKc->>SDKc: valida magic byte
+    SDKc->>SR: GET /schemas/ids/42/versions (é do subject?)
+    SR-->>SDKc: [{subject: transactions-value}]
+    SDKc->>SDKc: valida msg-index + desserializa
+    SDKc-->>Cons: Transaction  (ou erro tipado → DLQ)
+```
+
+**Envelope (wire format Confluent):**
+
+```
+[0x00 magic] [schema_id: 4 bytes big-endian] [message-index] [payload proto3]
+```
+
+- **`schema_id`** — resolvido do Registry no `bind` (produtor carimba; consumidor valida).
+- **`message-index`** — qual mensagem do `.proto` é esta (tamanho variável; derivado do descriptor —
+  genérico para qualquer mensagem, sem código por-contrato).
+- O **payload** é proto3 puro.
+
+---
+
+## Segurança (o que é garantido, e onde)
+
+O cumprimento do contrato acontece no **consumidor**. No `consume`, a mensagem é **rejeitada** (erro
+tipado, para o adapter rotear à **DLQ**) se:
+
+- o **magic byte** não for `0x00`;
+- o frame for curto demais;
+- o **`schema_id` não for uma versão registrada do subject daquele tópico** (id de outro schema/tópico
+  ou desconhecido → rejeitado; uma versão **mais nova compatível** do mesmo subject é aceita);
+- o **message-index** não bater com o tipo esperado;
+- o payload não desserializar.
+
+> ⚠️ **Honestidade sobre o alcance:** o Kafka puro aceita bytes quaisquer. Este projeto **não barra a
+> escrita no broker** — barrar na entrada exigiria *broker-side schema validation* (Confluent Platform)
+> ou um proxy. O envelope **não é assinado**: autenticação de remetente é outra camada (ACLs/TLS). O que
+> garantimos é **integridade estrutural e de schema, aplicada no consumidor**.
 
 ---
 
 ## Layout do repositório
 
 | Caminho | Conteúdo |
-|---------|----------|
-| `proto/` | Fontes `.proto` — única fonte de verdade; nunca editar arquivos gerados |
-| `gen/` | Codegen canônico gerado por `buf generate`; nunca editar à mão |
-| `sdk/go/` | Pacote Go publicável: tipos gerados + serde Confluent SR |
-| `sdk/node/` | Pacote Node/TS publicável: `@truther/contracts` — tipos + serde |
-| `sdk/python/` | Pacote Python publicável: `truther-contracts` — tipos + serde |
-| `interop/` | Harness cross-language: Go / Node / Python produzem e consomem entre si |
+|---|---|
+| `proto/` | Fontes `.proto` — **fonte única**; nunca editar gerados |
+| `sdk/go/` · `sdk/node/` · `sdk/python/` | SDKs publicáveis: tipos + serde + descriptor embutido |
+| `gen/` | Codegen canônico (`buf generate`); registro, nunca editar à mão |
+| `scripts/register_schemas.py` · `scripts/schemas.json` | **Registrador** (único que escreve schema no SR) + mapa topic→proto |
+| `interop/` | Harness cross-language: os 3 SDKs produzem e consomem entre si |
 | `docs/` | Especificações e políticas aprofundadas |
-| `buf.yaml` | Configuração do buf (lint, breaking, protovalidate) |
-| `buf.gen.yaml` | Pipeline de codegen multi-linguagem |
-| `.github/` | Workflows CI (`buf-ci.yml`, `generate.yml`) |
+| `buf.yaml` · `buf.gen.yaml` | Config do buf + pipeline de codegen |
+| `.github/workflows/` | CI: lint, breaking, testes dos SDKs, interop com SR real, geração |
 
 ---
 
-## Como consumir (por linguagem)
+## Como um serviço consome (por linguagem)
+
+> Nenhum exemplo lê `.proto`, passa schema, ou monta envelope. Só **importa o SDK**.
+> Variáveis de ambiente: `SCHEMA_REGISTRY_URL` (obrigatória), `SCHEMA_REGISTRY_API_KEY` /
+> `SCHEMA_REGISTRY_API_SECRET` (opcionais, para Registry autenticado).
 
 ### Go
 
-```bash
-go get github.com/vinirmbrozz/truther-contracts/sdk/go@latest
-```
-
 ```go
 import (
-    "os"
     serde "github.com/vinirmbrozz/truther-contracts/sdk/go"
-    txpb "github.com/vinirmbrozz/truther-contracts/sdk/go/proto"
+    txpb  "github.com/vinirmbrozz/truther-contracts/sdk/go/proto"
 )
 
-// Cria o serde — lê SCHEMA_REGISTRY_URL do ambiente
-s, err := serde.New()
+s, _ := serde.New()                              // lê SCHEMA_REGISTRY_URL
+_ = s.Bind("transactions", &txpb.Transaction{})  // resolve o schema_id no Registry
 
-// Registra o tipo na inicialização do serviço (idempotente)
-schema, _ := os.ReadFile("proto/transaction.proto")
-s.RegisterType("transactions", &txpb.Transaction{}, string(schema))
-
-// Producer
-frame, err := s.Produce("transactions", &txpb.Transaction{
+frame, _ := s.Produce("transactions", &txpb.Transaction{
     TransactionAmount: "9.99",
-    FinalDecision:    "APPROVED",
+    FinalDecision:     "APPROVED",
 })
 
-// Consumer
-msg, err := s.Consume("transactions", kafkaRawBytes)
+msg, _ := s.Consume("transactions", kafkaBytes)  // erro tipado → DLQ
 tx := msg.(*txpb.Transaction)
 ```
 
 ### Node / TypeScript
 
-```bash
-npm install file:./sdk/node   # ou o pacote publicado @truther/contracts
-```
-
-```typescript
+```ts
 import { TrutherSerde, Transaction } from '@truther/contracts';
-import type { MessageCodec } from '@truther/contracts';
-import { readFileSync } from 'fs';
 
-const serde = new TrutherSerde(); // lê SCHEMA_REGISTRY_URL do ambiente
+const serde = new TrutherSerde();                 // lê SCHEMA_REGISTRY_URL
+await serde.bind('transactions', Transaction);    // resolve o schema_id
 
-// Codec adapter ts-proto
-const TransactionCodec: MessageCodec<Transaction> = {
-  encode: (msg) => Buffer.from(Transaction.encode(msg).finish()),
-  decode: (bytes) => Transaction.decode(bytes),
-};
-
-// Registra na inicialização
-const protoContent = readFileSync('./proto/transaction.proto', 'utf8');
-await serde.registerSchema('transactions', protoContent);
-
-// Producer
-const frame = serde.produce('transactions', {
+const frame = serde.produce('transactions', Transaction.fromPartial({
   transactionAmount: '9.99',
   finalDecision: 'APPROVED',
-}, TransactionCodec);
+}));
 
-// Consumer — lança SerdeError se o payload for inválido (roteie para DLQ)
-const tx = await serde.consume('transactions', kafkaRawBytes, TransactionCodec);
+const tx = await serde.consume('transactions', kafkaBytes); // SerdeError → DLQ
 ```
 
 ### Python
-
-```bash
-pip install sdk/python/     # ou o pacote publicado truther-contracts
-```
 
 ```python
 from truther_contracts import Transaction
 from truther_contracts.serde import KafkaSerde
 
-serde = KafkaSerde()  # lê SCHEMA_REGISTRY_URL do ambiente
+serde = KafkaSerde()                              # lê SCHEMA_REGISTRY_URL
+serde.bind("transactions", Transaction)           # resolve o schema_id
 
-# Registra na inicialização (síncrono, idempotente)
-serde.startup({"transactions": Transaction})
-
-# Producer
 frame = serde.produce("transactions", Transaction(
-    transaction_amount="9.99",
+    transactionAmount="9.99",
     final_decision="APPROVED",
 ))
 
-# Consumer — lança SerdeError se o payload for inválido (roteie para DLQ)
-tx = serde.consume("transactions", kafka_raw_bytes, Transaction)
+tx = serde.consume("transactions", kafka_bytes)   # SerdeError → DLQ
 ```
-
-> **Variáveis de ambiente** (todas as linguagens): `SCHEMA_REGISTRY_URL` (obrigatória), `SCHEMA_REGISTRY_API_KEY`, `SCHEMA_REGISTRY_API_SECRET` (opcionais, para ambientes autenticados).
 
 ---
 
-## Como contribuir / mexer no proto
+## Como adicionar um contrato novo (o ponto do projeto)
 
-1. Edite `proto/<domain>.proto`
-2. Rode as verificações:
-   ```bash
-   buf lint          # estilo e nomenclatura
-   buf breaking      # regressão de compatibilidade vs. baseline
-   buf generate      # regera gen/ e sdk/ (ambos ficam em sincronia)
-   ```
-3. **Novos campos devem usar `snake_case`.** Tipos existentes nunca são removidos — regra de compatibilidade **BACKWARD**.
-4. Consulte [`docs/versioning-policy.md`](docs/versioning-policy.md) antes de qualquer mudança estrutural ou remoção.
+```mermaid
+flowchart LR
+    A["1. edita/cria<br/>proto/*.proto"] --> B["2. buf generate<br/><i>(CI regenera os SDKs)</i>"]
+    B --> C["3. registrador<br/>registra no SR"]
+    C --> D["4. serviço importa<br/>o SDK atualizado"]
+```
+
+1. Edite ou crie `proto/<dominio>.proto` (campos novos em `snake_case`; nunca remover — regra
+   **BACKWARD**).
+2. `buf generate` regenera **todos** os SDKs e o descriptor — **sem código por-linguagem por-contrato**
+   (o CI faz isso automaticamente em `generate.yml`).
+3. Adicione o tópico no `scripts/schemas.json` e rode o registrador (registra o schema no Registry).
+4. O serviço atualiza a versão do SDK e usa o tipo novo. Pronto.
 
 ---
 
-## Wire format (resumo)
+## Desenvolvimento local
 
-Todo valor de mensagem Kafka usa o envelope Confluent:
+```bash
+# 1. Subir Kafka + Schema Registry (localhost:8081)
+docker compose up -d
 
+# 2. Registrar os schemas no Registry local
+SCHEMA_REGISTRY_URL=http://localhost:8081 python scripts/register_schemas.py
+
+# 3. Testes de cada SDK (isolados, com SR mockado)
+cd sdk/go && go test ./...
+cd sdk/node && npm install && npm test
+pip install sdk/python/ pytest && python -m pytest sdk/python/tests/test_serde_unit.py
+
+# 4. Interop cross-language contra o SR real (Go ↔ Node ↔ Python)
+cd sdk/node && npm install && npm run build
+pip install sdk/python/
+cd interop && npm install
+SCHEMA_REGISTRY_URL=http://localhost:8081 node interop/orchestrate.mjs
 ```
-[0x00 magic] [schema_id: 4 bytes BE] [0x00 msg-index] [payload proto3]
-```
 
-Producers registram o schema no SR e serializam com o `schema_id`; consumers validam o `schema_id` contra o SR antes de deserializar, rejeitando payloads inválidos ou desconhecidos (roteiam para DLQ). Especificação completa: [`docs/confluent-sr-serde-spec.md`](docs/confluent-sr-serde-spec.md).
-
----
-
-## Toolchain / pré-requisitos
-
-| Ferramenta | Como instalar |
-|------------|---------------|
-| `buf` | `brew install bufbuild/buf/buf` — [instruções completas](https://buf.build/docs/installation) |
-| Plugin Go (`protoc-gen-go`) | `go install google.golang.org/protobuf/cmd/protoc-gen-go@latest` |
-| Plugins Node/TS (`ts-proto`) | `npm install` na raiz do repo (instalado via `node_modules`) |
-| Schema Registry local | `docker compose up -d` → SR disponível em `http://localhost:8081` |
-
-Para detalhes de configuração de plugins e ambientes de CI, veja [`docs/packaging.md`](docs/packaging.md).
+**Toolchain:** [`buf`](https://buf.build/docs/installation), Go 1.21+, Node 20+, Python 3.11+, Docker.
+A **geração** (`buf generate`) roda no CI/Linux (`generate.yml`) — não precisa rodar no seu host.
 
 ---
 
 ## Links
 
-- [Visão geral do projeto](docs/visao-geral.md) — como o truther-contracts funciona, para quem está chegando agora
-- [SPEC serde Confluent SR](docs/confluent-sr-serde-spec.md) — contrato autoritativo do wire format e SR
-- [Política de versionamento](docs/versioning-policy.md) — compatibilidade BACKWARD, layout proto, snake_case
-- [Packaging e layout dos SDKs](docs/packaging.md) — estrutura canônica `sdk/`, estratégia de codegen
+- [Visão geral](docs/visao-geral.md) — para quem está chegando agora
+- [SPEC serde Confluent SR](docs/confluent-sr-serde-spec.md) — contrato autoritativo do wire format
+- [Política de versionamento](docs/versioning-policy.md) — BACKWARD, layout proto, `snake_case`
+- [Packaging e layout dos SDKs](docs/packaging.md) — estrutura canônica `sdk/`
