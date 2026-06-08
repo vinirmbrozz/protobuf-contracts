@@ -1,4 +1,4 @@
-name: buf CI — lint, breaking, validate, interop
+name: CI — lint, breaking, SDK tests, cross-language interop
 
 on:
   push:
@@ -6,28 +6,27 @@ on:
       - 'proto/**'
       - 'buf.yaml'
       - 'buf.gen.yaml'
+      - 'sdk/**'
       - 'interop/**'
-      - 'sdk/node/**'
-      - 'sdk/python/**'
+      - 'scripts/**'
+      - '.github/workflows/buf-ci.yml'
   pull_request:
     paths:
       - 'proto/**'
       - 'buf.yaml'
       - 'buf.gen.yaml'
+      - 'sdk/**'
       - 'interop/**'
-      - 'sdk/node/**'
-      - 'sdk/python/**'
+      - 'scripts/**'
+      - '.github/workflows/buf-ci.yml'
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # 1. buf lint — style and naming conventions
-  # ---------------------------------------------------------------------------
+  # ── 1. buf lint ──────────────────────────────────────────────────────────
   buf-lint:
     name: buf lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: bufbuild/buf-action@v1
         with:
           version: '1.70.0'
@@ -35,9 +34,7 @@ jobs:
           lint: true
           breaking: false
 
-  # ---------------------------------------------------------------------------
-  # 2. buf breaking — backward compatibility against main branch
-  # ---------------------------------------------------------------------------
+  # ── 2. buf breaking (vs main) ────────────────────────────────────────────
   buf-breaking:
     name: buf breaking
     runs-on: ubuntu-latest
@@ -46,12 +43,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      # buf breaking --against .git#branch=main clona o .git LOCAL e procura o branch `main`.
-      # No checkout de PR, `main` só existe como remote-tracking — criamos o ref local aqui.
       - name: Ensure local main ref for breaking check
         run: git fetch origin main:main
-
       - uses: bufbuild/buf-action@v1
         with:
           version: '1.70.0'
@@ -60,73 +53,93 @@ jobs:
           breaking: true
           breaking_against: '.git#branch=main'
 
-  # ---------------------------------------------------------------------------
-  # 3. Node.js interop harness — runs today without Kafka or Schema Registry
-  # ---------------------------------------------------------------------------
-  interop-node:
-    name: interop harness (Node.js)
+  # ── 3. SDK unit tests (isolated, mock SR — no infra) ─────────────────────
+  sdk-go:
+    name: sdk/go unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Build sdk/node (@truther/contracts)
-        # Compile TypeScript → dist/ so the @truther/contracts package is ready.
-        working-directory: sdk/node
-        run: npm install && npm run build
-
-      - name: Install interop dependencies
-        # Installs @truther/contracts from the local sdk/node build.
-        working-directory: interop
-        run: npm install
-
-      - name: Run Node.js interop harness
-        run: node interop/harness.js
-
-  # ---------------------------------------------------------------------------
-  # 4. Go framing unit tests
-  # ---------------------------------------------------------------------------
-  interop-go:
-    name: interop framing tests (Go)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-
-      - name: Tidy Go module
-        # go mod tidy ensures go.mod/go.sum are consistent with Go 1.21 before testing.
-        # sdk/go declares go 1.21, so interop/go must match; tidy syncs any residual diff
-        # between the locally-generated go.sum (Go 1.19) and the CI toolchain (Go 1.21).
-        working-directory: interop/go
-        run: go mod tidy
-
-      - name: Run Go interop tests
-        # interop/go is a nested Go module (own go.mod); run from inside it.
-        working-directory: interop/go
+      - name: go test
+        working-directory: sdk/go
         run: go test ./...
 
-  # ---------------------------------------------------------------------------
-  # 5. Python framing unit tests
-  # ---------------------------------------------------------------------------
-  interop-python:
-    name: interop framing tests (Python)
+  sdk-node:
+    name: sdk/node unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: npm test
+        working-directory: sdk/node
+        run: npm install && npm test
 
+  sdk-python:
+    name: sdk/python unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: pytest
+        run: |
+          pip install sdk/python/ pytest
+          python -m pytest sdk/python/tests/test_serde_unit.py -q
+
+  # ── 4. Cross-language interop against a REAL Schema Registry ─────────────
+  interop:
+    name: cross-language interop (real SR)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install sdk/python and pytest
-        # truther_contracts provides Transaction, PredictiveAnalyzer, KafkaSerde.
-        run: pip install sdk/python/ pytest
+      - name: Start Kafka + Schema Registry
+        run: docker compose up -d
 
-      - name: Run Python interop tests
-        run: python -m pytest interop/python/test_interop.py -v
+      - name: Wait for Schema Registry
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8081/subjects >/dev/null; then echo "SR ready"; exit 0; fi
+            sleep 2
+          done
+          echo "Schema Registry did not become ready"; docker compose logs --tail=50; exit 1
+
+      - name: Build sdk/node
+        working-directory: sdk/node
+        run: npm install && npm run build
+
+      - name: Install sdk/python
+        run: pip install sdk/python/
+
+      - name: Install interop deps
+        working-directory: interop
+        run: npm install
+
+      - name: Register schemas (the only writer to SR)
+        run: python scripts/register_schemas.py
+        env:
+          SCHEMA_REGISTRY_URL: http://localhost:8081
+
+      - name: Run cross-language interop
+        run: node interop/orchestrate.mjs
+        env:
+          SCHEMA_REGISTRY_URL: http://localhost:8081
+          PYTHON: python
+
+      - name: Schema Registry logs (on failure)
+        if: failure()
+        run: docker compose logs --tail=100

@@ -1,132 +1,188 @@
 """
-Confluent Schema Registry serde for Truther Kafka messages.
+Thin Confluent Schema Registry serde (Decision A).
 
-Wire format (§2 of docs/confluent-sr-serde-spec.md):
-  [0x00][schema_id: 4 bytes big-endian][0x00][protobuf payload]
+The SDK never reads a .proto and never registers schemas (that is the
+registrador's job, out of band). bind() resolves a topic's schema_id from the
+Schema Registry (read-only); produce() stamps the Confluent envelope; consume()
+validates it strictly and deserializes into the bound type.
+
+Wire format:
+  [0x00 magic] [schema_id: 4 bytes BE] [message-index] [proto3 payload]
+
+The message-index is variable length (Confluent): a single top-level message at
+index 0 is the 1-byte 0x00 optimization; otherwise zig-zag varints (count, then
+each index). The index is derived natively from the message descriptor.
 
 Usage:
+  from truther_contracts import Transaction
   from truther_contracts.serde import KafkaSerde
-  serde = KafkaSerde()
-  await serde.startup({"transactions": Transaction})
-  framed = serde.produce("transactions", tx_message)
-  tx = serde.consume("transactions", framed, Transaction)
-"""
 
+  serde = KafkaSerde()                       # reads SCHEMA_REGISTRY_URL
+  serde.startup({"transactions": Transaction})  # resolves schema_ids
+  framed = serde.produce("transactions", tx)
+  tx = serde.consume("transactions", framed) # -> Transaction
+"""
 from __future__ import annotations
 
 import os
 import struct
-import logging
-from typing import Type, TypeVar
+from typing import Type
 
 import requests
 from google.protobuf.message import Message
 
-logger = logging.getLogger(__name__)
-
 MAGIC_BYTE = 0x00
-_HEADER_FMT = ">BI"  # 1 magic byte + 4-byte big-endian uint32 schema_id
-_HEADER_SIZE = 5  # 1 + 4
-_MSG_INDEX = b"\x00"  # first-message-in-schema — Truther convention (§2.3)
-_ENVELOPE_SIZE = 6  # magic + schema_id + msg_index
 
 
 class SerdeError(Exception):
-    """Raised for any invalid Confluent-framed payload."""
-
-
-class UnknownSchemaError(SerdeError):
-    """schema_id is not registered in the Schema Registry."""
+    """Base for any rejected payload; the adapter routes these to the DLQ."""
 
 
 class InvalidMagicByteError(SerdeError):
-    """First byte of the payload is not 0x00."""
+    """First byte is not 0x00."""
+
+
+class FrameTooShortError(SerdeError):
+    """Frame is shorter than the minimum envelope."""
+
+
+class TopicNotBoundError(SerdeError):
+    """bind() was not called for this topic."""
+
+
+class SchemaForeignError(SerdeError):
+    """schema_id is not a registered version of this topic's subject."""
+
+
+class MessageIndexMismatchError(SerdeError):
+    """Envelope message-index does not match the bound type."""
+
+
+class DeserializeError(SerdeError):
+    """Protobuf payload failed to decode."""
+
+
+# ── Schema Registry REST client (read-only) ──────────────────────────────────
 
 
 class SchemaRegistryClient:
-    """Thin synchronous HTTP client for Confluent Schema Registry."""
+    """Read-only Confluent SR client. Resolves ids; never registers."""
 
     def __init__(self, base_url: str, api_key: str | None = None, api_secret: str | None = None):
         self._base_url = base_url.rstrip("/")
         self._session = requests.Session()
         if api_key and api_secret:
             self._session.auth = (api_key, api_secret)
-        self._session.headers.update({"Content-Type": "application/vnd.schemaregistry.v1+json"})
-        # Cache: subject -> schema_id, schema_id -> subject
-        self._subject_to_id: dict[str, int] = {}
-        self._id_to_subject: dict[int, str] = {}
+        self._session.headers.update({"Accept": "application/vnd.schemaregistry.v1+json"})
+        self._id_subject_ok: set[tuple[int, str]] = set()
 
-    def register_schema(self, subject: str, proto_schema: str) -> int:
-        """
-        Register a Protobuf schema under the given subject.
-        Returns the schema_id assigned by SR (may return existing id for same schema).
-        """
-        if subject in self._subject_to_id:
-            return self._subject_to_id[subject]
-
-        payload = {"schema": proto_schema, "schemaType": "PROTOBUF"}
-        url = f"{self._base_url}/subjects/{subject}/versions"
-        resp = self._session.post(url, json=payload, timeout=10)
+    def latest_id(self, subject: str) -> int:
+        """Resolve the latest registered schema id for a subject."""
+        url = f"{self._base_url}/subjects/{subject}/versions/latest"
+        resp = self._session.get(url, timeout=10)
+        if resp.status_code == 404:
+            raise SchemaForeignError(f"subject '{subject}' is not registered in Schema Registry")
         resp.raise_for_status()
-        schema_id: int = resp.json()["id"]
-        self._subject_to_id[subject] = schema_id
-        self._id_to_subject[schema_id] = subject
-        logger.info("Registered schema subject=%s schema_id=%d", subject, schema_id)
-        return schema_id
+        return int(resp.json()["id"])
 
-    def get_schema_id(self, subject: str) -> int:
-        """Return cached schema_id for subject, raising if not registered yet."""
-        if subject not in self._subject_to_id:
-            raise UnknownSchemaError(f"Schema for subject '{subject}' not registered in this client")
-        return self._subject_to_id[subject]
-
-    def verify_schema_id(self, schema_id: int) -> bool:
-        """Return True if schema_id is known to SR (uses cache + fallback HTTP GET)."""
-        if schema_id in self._id_to_subject:
+    def id_belongs_to_subject(self, schema_id: int, subject: str) -> bool:
+        """True iff schema_id is a registered version of subject (cached)."""
+        if (schema_id, subject) in self._id_subject_ok:
             return True
-        url = f"{self._base_url}/schemas/ids/{schema_id}"
+        url = f"{self._base_url}/schemas/ids/{schema_id}/versions"
         resp = self._session.get(url, timeout=10)
         if resp.status_code == 404:
             return False
         resp.raise_for_status()
-        # Populate reverse cache
-        self._id_to_subject[schema_id] = resp.json().get("subject", str(schema_id))
-        return True
+        for pair in resp.json():
+            if pair.get("subject") == subject:
+                self._id_subject_ok.add((schema_id, subject))
+                return True
+        return False
 
 
-def _get_proto_schema(msg_class: Type[Message]) -> str:
-    """Return the .proto file source for a generated protobuf message class."""
-    descriptor = msg_class.DESCRIPTOR.file
-    # Return the full qualified proto file name; SR stores the schema by name.
-    # We use the serialized file descriptor to handle imports correctly.
-    # For SR registration we need the human-readable .proto source.
-    # Since buf-generated files embed their descriptor, we reconstruct a minimal schema.
-    # Full proto source is not embedded in Python generated code; we read the .proto file
-    # from the package, falling back to the descriptor proto serialisation as a string.
-    try:
-        from google.protobuf import descriptor_pb2
-        fdp = descriptor_pb2.FileDescriptorProto()
-        descriptor.CopyToProto(fdp)
-        return fdp.SerializeToString().hex()  # SR accepts binary descriptors as hex
-    except Exception:
-        # Absolute fallback: use file name as a placeholder schema
-        return descriptor.name
+# ── message-index (Confluent) ────────────────────────────────────────────────
+
+
+def _message_indexes(msg_class: Type[Message]) -> list[int]:
+    """Declaration-order index path of a (top-level) message in its file.
+
+    The Python message Descriptor exposes no ``index`` for top-level types, so we
+    read declaration order from the FileDescriptorProto (reliable across the C++
+    and upb runtimes).
+    """
+    from google.protobuf import descriptor_pb2
+
+    desc = msg_class.DESCRIPTOR
+    fdp = descriptor_pb2.FileDescriptorProto()
+    desc.file.CopyToProto(fdp)
+    for i, mt in enumerate(fdp.message_type):
+        if mt.name == desc.name:
+            return [i]
+    raise SerdeError(f"message {desc.full_name} not found in its file descriptor")
+
+
+def _encode_indexes(indexes: list[int]) -> bytes:
+    if len(indexes) == 1 and indexes[0] == 0:
+        return b"\x00"
+    out = bytearray()
+    _append_zigzag(out, len(indexes))
+    for idx in indexes:
+        _append_zigzag(out, idx)
+    return bytes(out)
+
+
+def _append_zigzag(out: bytearray, value: int) -> None:
+    zz = (value << 1) & 0xFFFFFFFF  # indexes are small non-negative
+    while zz >= 0x80:
+        out.append((zz & 0x7F) | 0x80)
+        zz >>= 7
+    out.append(zz)
+
+
+def _read_zigzag(data: bytes, offset: int) -> tuple[int, int]:
+    ux = 0
+    shift = 0
+    n = 0
+    while True:
+        if offset + n >= len(data):
+            raise FrameTooShortError("truncated message-index varint")
+        b = data[offset + n]
+        n += 1
+        ux |= (b & 0x7F) << shift
+        if b < 0x80:
+            break
+        shift += 7
+    return (ux >> 1) ^ -(ux & 1), offset + n
+
+
+def _read_indexes(data: bytes, offset: int) -> tuple[list[int], int]:
+    count, offset = _read_zigzag(data, offset)
+    if count == 0:  # 1-byte optimization → [0]
+        return [0], offset
+    indexes: list[int] = []
+    for _ in range(count):
+        idx, offset = _read_zigzag(data, offset)
+        indexes.append(idx)
+    return indexes, offset
+
+
+# ── Serde ─────────────────────────────────────────────────────────────────────
+
+
+class _Binding:
+    __slots__ = ("msg_class", "subject", "schema_id", "msg_index_bytes", "indexes")
+
+    def __init__(self, msg_class, subject, schema_id, msg_index_bytes, indexes):
+        self.msg_class = msg_class
+        self.subject = subject
+        self.schema_id = schema_id
+        self.msg_index_bytes = msg_index_bytes
+        self.indexes = indexes
 
 
 class KafkaSerde:
-    """
-    Confluent SR-aware serde for Truther Kafka messages.
-
-    Startup:
-        serde = KafkaSerde()
-        serde.startup({"transactions": Transaction})  # registers schemas eagerly
-
-    Produce:
-        framed_bytes = serde.produce("transactions", tx_message)
-
-    Consume:
-        tx = serde.consume("transactions", framed_bytes, Transaction)
-    """
+    """Thin Confluent SR serde — resolves ids, frames, and validates strictly."""
 
     def __init__(
         self,
@@ -136,107 +192,68 @@ class KafkaSerde:
     ):
         url = sr_url or os.environ.get("SCHEMA_REGISTRY_URL")
         if not url:
-            raise ValueError(
-                "Schema Registry URL is required: pass sr_url or set SCHEMA_REGISTRY_URL env var"
-            )
-        api_key = sr_api_key or os.environ.get("SCHEMA_REGISTRY_API_KEY")
-        api_secret = sr_api_secret or os.environ.get("SCHEMA_REGISTRY_API_SECRET")
-        self._sr = SchemaRegistryClient(url, api_key, api_secret)
-        # topic -> message class (registered at startup)
-        self._topic_to_class: dict[str, Type[Message]] = {}
-        # topic -> cached schema_id
-        self._topic_to_schema_id: dict[str, int] = {}
+            raise ValueError("Schema Registry URL required: pass sr_url or set SCHEMA_REGISTRY_URL")
+        self._sr = SchemaRegistryClient(
+            url,
+            sr_api_key or os.environ.get("SCHEMA_REGISTRY_API_KEY"),
+            sr_api_secret or os.environ.get("SCHEMA_REGISTRY_API_SECRET"),
+        )
+        self._bindings: dict[str, _Binding] = {}
+
+    def bind(self, topic: str, msg_class: Type[Message]) -> None:
+        """Map topic→type and resolve its schema_id from SR (read-only)."""
+        _require_message(msg_class)
+        subject = f"{topic}-value"
+        schema_id = self._sr.latest_id(subject)
+        indexes = _message_indexes(msg_class)
+        self._bindings[topic] = _Binding(
+            msg_class, subject, schema_id, _encode_indexes(indexes), indexes
+        )
 
     def startup(self, topic_to_class: dict[str, Type[Message]]) -> None:
-        """
-        Eagerly register schemas for each topic.
-
-        topic_to_class: {"topic-name": MessageClass, ...}
-
-        Must be called before produce(). Raises on SR connection errors.
-        """
+        """Bind every topic→type pair."""
         for topic, msg_class in topic_to_class.items():
-            self._validate_known_type(msg_class)
-            subject = f"{topic}-value"
-            proto_schema = _get_proto_schema(msg_class)
-            schema_id = self._sr.register_schema(subject, proto_schema)
-            self._topic_to_class[topic] = msg_class
-            self._topic_to_schema_id[topic] = schema_id
-            logger.info("Startup: topic=%s subject=%s schema_id=%d", topic, subject, schema_id)
+            self.bind(topic, msg_class)
 
     def produce(self, topic: str, msg: Message) -> bytes:
-        """
-        Serialize msg and frame it with the Confluent SR envelope.
+        """Serialize msg and wrap it in the Confluent envelope."""
+        b = self._bindings.get(topic)
+        if b is None:
+            raise TopicNotBoundError(f"topic '{topic}' not bound; call bind() at startup")
+        if not isinstance(msg, b.msg_class):
+            raise TypeError(f"expected {b.msg_class.__name__}, got {type(msg).__name__}")
+        header = struct.pack(">BI", MAGIC_BYTE, b.schema_id)
+        return header + b.msg_index_bytes + msg.SerializeToString()
 
-        Returns framed bytes ready to be published to Kafka.
-        Raises TypeError if msg is not a type registered in startup().
-        Raises RuntimeError if startup() was not called for this topic.
-        """
-        msg_class = self._topic_to_class.get(topic)
-        if msg_class is None:
-            raise RuntimeError(
-                f"Topic '{topic}' not registered — call startup() before produce()"
+    def consume(self, topic: str, data: bytes) -> Message:
+        """Validate the envelope and deserialize into the bound type (typed errors → DLQ)."""
+        b = self._bindings.get(topic)
+        if b is None:
+            raise TopicNotBoundError(f"topic '{topic}' not bound; call bind() at startup")
+
+        if len(data) < 6:
+            raise FrameTooShortError(f"frame too short: {len(data)} bytes (minimum 6)")
+        if data[0] != MAGIC_BYTE:
+            raise InvalidMagicByteError(f"invalid magic byte: 0x{data[0]:02x} (expected 0x00)")
+        schema_id = struct.unpack(">I", data[1:5])[0]
+        indexes, offset = _read_indexes(data, 5)
+        payload = data[offset:]
+
+        if not self._sr.id_belongs_to_subject(schema_id, b.subject):
+            raise SchemaForeignError(
+                f"schema_id={schema_id} is not a registered version of '{b.subject}'"
             )
-        if not isinstance(msg, msg_class):
-            raise TypeError(
-                f"Expected {msg_class.__name__}, got {type(msg).__name__}"
-            )
-        schema_id = self._topic_to_schema_id[topic]
-        proto_bytes = msg.SerializeToString()
-        return self._frame(schema_id, proto_bytes)
+        if indexes != b.indexes:
+            raise MessageIndexMismatchError(f"message-index {indexes} != bound {b.indexes}")
 
-    def consume(self, topic: str, data: bytes, msg_class: Type[Message]) -> Message:
-        """
-        Validate and deserialize a Confluent-framed Kafka message.
-
-        Raises InvalidMagicByteError, UnknownSchemaError, SerdeError on bad payloads.
-        """
-        self._validate_known_type(msg_class)
-        schema_id, proto_bytes = self._parse_frame(data)
-
-        # Verify schema_id is known to SR
-        if not self._sr.verify_schema_id(schema_id):
-            raise UnknownSchemaError(
-                f"schema_id={schema_id} is not registered in Schema Registry"
-            )
-
-        instance = msg_class()
+        instance = b.msg_class()
         try:
-            instance.ParseFromString(proto_bytes)
-        except Exception as exc:
-            raise SerdeError(f"Protobuf deserialization failed: {exc}") from exc
+            instance.ParseFromString(payload)
+        except Exception as exc:  # noqa: BLE001 — any decode failure → typed error for DLQ
+            raise DeserializeError(f"protobuf deserialization failed: {exc}") from exc
         return instance
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
-    @staticmethod
-    def _frame(schema_id: int, proto_bytes: bytes) -> bytes:
-        header = struct.pack(">BI", MAGIC_BYTE, schema_id)
-        return header + _MSG_INDEX + proto_bytes
-
-    @staticmethod
-    def _parse_frame(data: bytes) -> tuple[int, bytes]:
-        if len(data) < _ENVELOPE_SIZE:
-            raise SerdeError(
-                f"Frame too short: {len(data)} bytes (minimum {_ENVELOPE_SIZE})"
-            )
-        magic = data[0]
-        if magic != MAGIC_BYTE:
-            raise InvalidMagicByteError(
-                f"Invalid magic byte: 0x{magic:02x} (expected 0x00)"
-            )
-        schema_id: int = struct.unpack(">I", data[1:5])[0]
-        # byte[5] is msg_index (always 0x00 in Truther convention)
-        proto_bytes = data[6:]
-        return schema_id, proto_bytes
-
-    @staticmethod
-    def _validate_known_type(msg_class: Type[Message]) -> None:
-        """Raise TypeError if msg_class is not a protobuf Message subclass."""
-        if not (isinstance(msg_class, type) and issubclass(msg_class, Message)):
-            raise TypeError(
-                f"{msg_class!r} is not a protobuf Message subclass. "
-                "Only types generated from proto/ files are accepted."
-            )
+def _require_message(msg_class: Type[Message]) -> None:
+    if not (isinstance(msg_class, type) and issubclass(msg_class, Message)):
+        raise TypeError(f"{msg_class!r} is not a protobuf Message subclass")

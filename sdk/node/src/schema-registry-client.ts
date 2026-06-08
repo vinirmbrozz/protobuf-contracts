@@ -1,78 +1,65 @@
 /**
- * Minimal HTTP client for Confluent Schema Registry REST API.
- * Uses Node 18+ native fetch — no extra dependencies.
+ * Read-only client for the Confluent Schema Registry REST API.
+ * The SDK NEVER registers schemas (that is the registrador's job, out of band).
+ * It only resolves/validates ids. Uses Node 18+ native fetch — no extra deps.
  *
- * Only the two endpoints used by the serde lib are implemented:
- *   POST /subjects/{subject}/versions  — register a schema, get its ID
- *   GET  /schemas/ids/{id}             — verify a schema ID exists
+ * Endpoints used:
+ *   GET /subjects/{subject}/versions/latest  — resolve the subject's schema id
+ *   GET /schemas/ids/{id}/versions           — verify an id belongs to a subject
  */
 
-const JSON_CONTENT = 'application/vnd.schemaregistry.v1+json';
+const ACCEPT = 'application/vnd.schemaregistry.v1+json';
 
 export class SchemaRegistryClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
-
-  /**
-   * Cache: schema_id → subject name.
-   * Populated on registration and on successful SR lookups.
-   */
-  private readonly idCache = new Map<number, string>();
+  /** cache: "<id>|<subject>" confirmed as a registered version of that subject */
+  private readonly idSubjectOk = new Set<string>();
 
   constructor(baseUrl: string, apiKey?: string, apiSecret?: string) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
-    this.headers = {
-      'Content-Type': JSON_CONTENT,
-      Accept: JSON_CONTENT,
-    };
+    this.headers = { Accept: ACCEPT };
     if (apiKey && apiSecret) {
-      const creds = Buffer.from(`${apiKey}:${apiSecret}`).toString('base64');
-      this.headers['Authorization'] = `Basic ${creds}`;
+      this.headers['Authorization'] =
+        'Basic ' + Buffer.from(`${apiKey}:${apiSecret}`).toString('base64');
     }
   }
 
-  /**
-   * Register a PROTOBUF schema under `<topic>-value` and return the schema ID.
-   * If the identical schema is already registered, SR returns the existing ID
-   * (idempotent). Caches the ID locally.
-   */
-  async registerSchema(subject: string, protoContent: string): Promise<number> {
-    const res = await fetch(`${this.baseUrl}/subjects/${subject}/versions`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({ schemaType: 'PROTOBUF', schema: protoContent }),
-    });
+  /** Resolve the latest registered schema id for a subject. Throws if absent. */
+  async latestId(subject: string): Promise<number> {
+    const res = await fetch(
+      `${this.baseUrl}/subjects/${encodeURIComponent(subject)}/versions/latest`,
+      { headers: this.headers },
+    );
+    if (res.status === 404) {
+      throw new Error(`subject '${subject}' is not registered in Schema Registry`);
+    }
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`SR registration failed for subject '${subject}': ${res.status} ${body}`);
+      throw new Error(`SR resolve '${subject}': HTTP ${res.status} ${await res.text()}`);
     }
     const { id } = (await res.json()) as { id: number };
-    this.idCache.set(id, subject);
     return id;
   }
 
   /**
-   * Verify a schema ID exists in SR. Returns the subject it belongs to,
-   * or null when the ID is unknown (404). Caches successful lookups.
+   * True iff schema `id` is a registered version of `subject`. A newer version
+   * of the same subject is accepted (forward-compat); an id from another subject
+   * or unknown to SR is rejected. Caches positive results.
    */
-  async verifySchemaId(schemaId: number): Promise<string | null> {
-    if (this.idCache.has(schemaId)) return this.idCache.get(schemaId)!;
+  async idBelongsToSubject(id: number, subject: string): Promise<boolean> {
+    const key = `${id}|${subject}`;
+    if (this.idSubjectOk.has(key)) return true;
 
-    const res = await fetch(`${this.baseUrl}/schemas/ids/${schemaId}`, {
+    const res = await fetch(`${this.baseUrl}/schemas/ids/${id}/versions`, {
       headers: this.headers,
     });
-    if (res.status === 404) return null;
+    if (res.status === 404) return false;
     if (!res.ok) {
-      throw new Error(`SR lookup failed for schema_id ${schemaId}: ${res.status}`);
+      throw new Error(`SR verify id=${id}: HTTP ${res.status} ${await res.text()}`);
     }
-    // SR returns the schema content; we only need to confirm it exists.
-    // Store a placeholder so repeated unknown IDs still hit the cache.
-    this.idCache.set(schemaId, `__remote__${schemaId}`);
-    return this.idCache.get(schemaId)!;
-  }
-
-  /** True when the schema ID is already in the local cache (no network call). */
-  isCached(schemaId: number): boolean {
-    return this.idCache.has(schemaId);
+    const pairs = (await res.json()) as Array<{ subject: string; version: number }>;
+    const ok = pairs.some((p) => p.subject === subject);
+    if (ok) this.idSubjectOk.add(key);
+    return ok;
   }
 }

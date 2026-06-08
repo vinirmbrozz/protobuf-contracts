@@ -30,6 +30,7 @@ plugins:
       - esModuleInterop=true
       - outputServices=false
       - oneof=unions
+      - outputTypeRegistry=true
   # SDK embedding (Strategy A — ROD-22)
   - name: ts_proto
     path: node_modules/ts-proto/protoc-gen-ts_proto
@@ -38,6 +39,7 @@ plugins:
       - esModuleInterop=true
       - outputServices=false
       - oneof=unions
+      - outputTypeRegistry=true
 
   # --- Node.js CommonJS — requires protoc-gen-js on PATH ---
   # Canonical codegen record only; Node SDK uses the ts_proto output above.

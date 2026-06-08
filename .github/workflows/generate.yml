@@ -54,6 +54,20 @@ jobs:
       - name: Run buf generate
         run: buf generate
 
+      # Embed the FileDescriptorSet so the Node SDK can resolve message indexes
+      # generically at runtime (ts-proto, unlike Go/Python, embeds no descriptor).
+      # Regenerated here whenever proto/ changes — no per-contract code.
+      - name: Embed descriptor set (Node SDK)
+        run: |
+          buf build -o /tmp/desc.binpb
+          {
+            echo "// Code generated from 'buf build' — DO NOT EDIT."
+            echo "// FileDescriptorSet for ALL contracts; the SDK derives each message's"
+            echo "// index (Confluent msg-index) from this at runtime."
+            echo "export const DESCRIPTOR_SET_B64 ="
+            echo "  \"$(base64 -w0 /tmp/desc.binpb)\";"
+          } > sdk/node/src/generated/descriptor-set.ts
+
       # Commit gen/ + sdk/ back to the branch.  [skip ci] breaks the push loop.
       - name: Commit generated files
         uses: stefanzweifel/git-auto-commit-action@v5

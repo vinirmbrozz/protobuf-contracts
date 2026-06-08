@@ -1,240 +1,148 @@
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+
 import { TrutherSerde, SerdeError } from '../serde';
-import { frameMessage } from '../framing';
-import type { MessageCodec } from '../types';
+import { encodeMessageIndexes, frameMessage } from '../framing';
+import { Transaction, PredictiveAnalyzer } from '../generated/proto/transaction';
 
-// ---------------------------------------------------------------------------
-// Minimal test codec — JSON-over-Buffer, no real proto runtime needed.
-// ---------------------------------------------------------------------------
-
-interface Msg {
-  id: string;
-  amount: string;
-}
-
-const MsgCodec: MessageCodec<Msg> = {
-  encode: (m) => Buffer.from(JSON.stringify(m)),
-  decode: (b) => JSON.parse(Buffer.from(b).toString()) as Msg,
-};
-
-// ---------------------------------------------------------------------------
-// Mock global fetch for Schema Registry calls.
-// ---------------------------------------------------------------------------
-
-const mockFetch = jest.fn();
-global.fetch = mockFetch as unknown as typeof fetch;
-
-function okJson(body: unknown) {
-  return Promise.resolve({
-    ok: true,
-    status: 200,
-    json: () => Promise.resolve(body),
-    text: () => Promise.resolve(JSON.stringify(body)),
-  } as Response);
-}
-
-function errResponse(status: number, body = '') {
-  return Promise.resolve({
-    ok: false,
-    status,
-    json: () => Promise.resolve({}),
-    text: () => Promise.resolve(body),
-  } as Response);
-}
-
-function notFound() {
-  return Promise.resolve({
-    ok: false,
-    status: 404,
-    json: () => Promise.resolve({}),
-    text: () => Promise.resolve('not found'),
-  } as Response);
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe('TrutherSerde — unit (fetch mocked)', () => {
-  let serde: TrutherSerde;
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-    serde = new TrutherSerde({ srUrl: 'http://localhost:8081' });
-  });
-
-  // ---------- registerSchema ----------
-
-  describe('registerSchema', () => {
-    it('posts to /subjects/<topic>-value/versions with PROTOBUF schema', async () => {
-      mockFetch.mockReturnValueOnce(okJson({ id: 1 }));
-      const id = await serde.registerSchema('transactions', 'syntax = "proto3";');
-      expect(id).toBe(1);
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8081/subjects/transactions-value/versions',
-        expect.objectContaining({
-          method: 'POST',
-          body: expect.stringContaining('"schemaType":"PROTOBUF"'),
-        }),
-      );
-    });
-
-    it('caches the returned schema_id', async () => {
-      mockFetch.mockReturnValueOnce(okJson({ id: 7 }));
-      await serde.registerSchema('payments', '...');
-      // produce should work without network now
-      const buf = serde.produce('payments', { id: 'x', amount: '1.00' }, MsgCodec);
-      expect(buf.readUInt32BE(1)).toBe(7);
-    });
-
-    it('throws when SR returns non-OK status', async () => {
-      mockFetch.mockReturnValueOnce(errResponse(500, 'Internal Server Error'));
-      await expect(serde.registerSchema('bad', '...')).rejects.toThrow(
-        "SR registration failed for subject 'bad-value': 500",
-      );
-    });
-  });
-
-  // ---------- produce ----------
-
-  describe('produce', () => {
-    beforeEach(async () => {
-      mockFetch.mockReturnValueOnce(okJson({ id: 3 }));
-      await serde.registerSchema('transactions', '...');
-    });
-
-    it('returns Buffer with Confluent envelope magic byte 0x00', () => {
-      const buf = serde.produce('transactions', { id: 'a', amount: '9.99' }, MsgCodec);
-      expect(buf[0]).toBe(0x00);
-    });
-
-    it('encodes schema_id as big-endian uint32 at offset 1', () => {
-      const buf = serde.produce('transactions', { id: 'a', amount: '9.99' }, MsgCodec);
-      expect(buf.readUInt32BE(1)).toBe(3);
-    });
-
-    it('message-index byte at offset 5 is 0x00', () => {
-      const buf = serde.produce('transactions', { id: 'a', amount: '9.99' }, MsgCodec);
-      expect(buf[5]).toBe(0x00);
-    });
-
-    it('throws when topic has no registered schema', () => {
-      expect(() => serde.produce('unknown-topic', { id: 'x', amount: '0' }, MsgCodec)).toThrow(
-        "No schema registered for topic 'unknown-topic'",
-      );
-    });
-
-    it('produce → consume roundtrip (same message)', async () => {
-      // The registry already has schema_id=3 cached from beforeEach registration,
-      // so verifySchemaId will not hit network.
-      const msg: Msg = { id: 'roundtrip-1', amount: '42.00' };
-      const buf = serde.produce('transactions', msg, MsgCodec);
-      const decoded = await serde.consume('transactions', buf, MsgCodec);
-      expect(decoded).toEqual(msg);
-    });
-  });
-
-  // ---------- consume ----------
-
-  describe('consume', () => {
-    beforeEach(async () => {
-      mockFetch.mockReturnValueOnce(okJson({ id: 5 }));
-      await serde.registerSchema('transactions', '...');
-    });
-
-    it('decodes a validly framed message (schema_id cached)', async () => {
-      const msg: Msg = { id: 'tx-1', amount: '100.00' };
-      const buf = serde.produce('transactions', msg, MsgCodec);
-      const decoded = await serde.consume('transactions', buf, MsgCodec);
-      expect(decoded).toEqual(msg);
-    });
-
-    it('verifies unknown schema_id against SR (cache miss → fetch)', async () => {
-      // schema_id=99 was never registered locally; SR returns it
-      mockFetch.mockReturnValueOnce(okJson({ schema: '...' })); // GET /schemas/ids/99
-      const framed = frameMessage(99, Buffer.from(JSON.stringify({ id: 'x', amount: '0' })));
-      const decoded = await serde.consume('transactions', framed, MsgCodec);
-      expect((decoded as Msg).id).toBe('x');
-    });
-
-    it('throws SerdeError INVALID_MAGIC_BYTE on bad first byte', async () => {
-      const bad = Buffer.from([0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x0a]);
-      await expect(serde.consume('transactions', bad, MsgCodec)).rejects.toMatchObject({
-        code: 'INVALID_MAGIC_BYTE',
-      });
-    });
-
-    it('throws SerdeError INVALID_MAGIC_BYTE on undersized frame', async () => {
-      const short = Buffer.from([0x00, 0x00, 0x01]);
-      await expect(serde.consume('transactions', short, MsgCodec)).rejects.toMatchObject({
-        code: 'INVALID_MAGIC_BYTE',
-      });
-    });
-
-    it('throws SerdeError UNKNOWN_SCHEMA_ID when SR returns 404', async () => {
-      mockFetch.mockReturnValueOnce(notFound());
-      const framed = frameMessage(9999, Buffer.from('payload'));
-      await expect(serde.consume('transactions', framed, MsgCodec)).rejects.toMatchObject({
-        code: 'UNKNOWN_SCHEMA_ID',
-      });
-    });
-
-    it('throws SerdeError DESERIALIZATION_ERROR on corrupt bytes', async () => {
-      // schema_id=5 is cached from beforeEach; no fetch needed
-      const corrupt = frameMessage(5, Buffer.from('not-json-!@#'));
-      const badCodec: MessageCodec<Msg> = {
-        encode: MsgCodec.encode,
-        decode: () => { throw new Error('bad proto'); },
-      };
-      await expect(serde.consume('transactions', corrupt, badCodec)).rejects.toMatchObject({
-        code: 'DESERIALIZATION_ERROR',
-      });
-    });
-
-    it('SerdeError carries rawPayload for DLQ routing', async () => {
-      const bad = Buffer.from([0xff, 0x00, 0x00, 0x00, 0x01, 0x00]);
-      try {
-        await serde.consume('transactions', bad, MsgCodec);
-        fail('should have thrown');
-      } catch (e) {
-        expect(e).toBeInstanceOf(SerdeError);
-        expect((e as SerdeError).rawPayload).toEqual(bad);
+/**
+ * Read-only mock Schema Registry seeded with subject→id. Serves:
+ *   GET /subjects/{subject}/versions/latest  → { id }
+ *   GET /schemas/ids/{id}/versions           → [{ subject, version }]
+ */
+async function mockSR(subjectId: Record<string, number>): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = http.createServer((req, res) => {
+    const parts = (req.url ?? '').split('/'); // ["", "subjects", sub, "versions", "latest"]
+    res.setHeader('content-type', 'application/json');
+    if (parts[1] === 'subjects' && parts[3] === 'versions' && parts[4] === 'latest') {
+      const sub = decodeURIComponent(parts[2] ?? '');
+      if (sub in subjectId) return void res.end(JSON.stringify({ id: subjectId[sub] }));
+      res.statusCode = 404;
+      return void res.end('{}');
+    }
+    if (parts[1] === 'schemas' && parts[2] === 'ids' && parts[4] === 'versions') {
+      const id = Number(parts[3]);
+      const out = Object.entries(subjectId)
+        .filter(([, v]) => v === id)
+        .map(([subject]) => ({ subject, version: 1 }));
+      if (out.length === 0) {
+        res.statusCode = 404;
+        return void res.end('[]');
       }
-    });
+      return void res.end(JSON.stringify(out));
+    }
+    res.statusCode = 404;
+    res.end('{}');
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise<void>((r) => server.close(() => r())),
+  };
+}
+
+function sampleTx(): Transaction {
+  return Transaction.create({
+    transactionAmount: '9.99',
+    finalDecision: 'APPROVED',
+    predictiveAnalyzer: PredictiveAnalyzer.create({ isAllowed: true, reason: 'ok', cardId: 'c1' }),
+  });
+}
+
+describe('TrutherSerde (thin, mock SR)', () => {
+  test('round-trip Transaction (index 1 → variable msg-index)', async () => {
+    const sr = await mockSR({ 'transactions-value': 42 });
+    const serde = new TrutherSerde({ srUrl: sr.url });
+    await serde.bind('transactions', Transaction);
+
+    const original = sampleTx();
+    const framed = serde.produce('transactions', original);
+    expect(framed[0]).toBe(0x00);
+    expect(framed.readUInt32BE(1)).toBe(42);
+    expect([...framed.subarray(5, 7)]).toEqual([0x02, 0x02]); // msg-index for index 1
+
+    const got = await serde.consume<Transaction>('transactions', framed);
+    expect(got).toEqual(original);
+    await sr.close();
   });
 
-  // ---------- env-var configuration ----------
+  test('round-trip PredictiveAnalyzer (index 0 → 0x00)', async () => {
+    const sr = await mockSR({ 'predictions-value': 7 });
+    const serde = new TrutherSerde({ srUrl: sr.url });
+    await serde.bind('predictions', PredictiveAnalyzer);
 
-  describe('constructor — env-var fallbacks', () => {
-    const ORIG_ENV = process.env;
+    const framed = serde.produce('predictions', PredictiveAnalyzer.create({ isAllowed: true }));
+    expect(framed[5]).toBe(0x00);
+    expect(await serde.consume('predictions', framed)).toBeDefined();
+    await sr.close();
+  });
 
-    beforeEach(() => {
-      process.env = { ...ORIG_ENV };
+  test('bind fails when the subject is not registered', async () => {
+    const sr = await mockSR({});
+    const serde = new TrutherSerde({ srUrl: sr.url });
+    await expect(serde.bind('transactions', Transaction)).rejects.toThrow();
+    await sr.close();
+  });
+
+  test('produce/consume on an unbound topic → TOPIC_NOT_BOUND', async () => {
+    const sr = await mockSR({ 'transactions-value': 42 });
+    const serde = new TrutherSerde({ srUrl: sr.url });
+    expect(() => serde.produce('transactions', sampleTx())).toThrow(
+      expect.objectContaining({ code: 'TOPIC_NOT_BOUND' }),
+    );
+    await expect(serde.consume('transactions', Buffer.from([0x00, 0, 0, 0, 42, 0x02, 0x02]))).rejects.toMatchObject({
+      code: 'TOPIC_NOT_BOUND',
     });
+    await sr.close();
+  });
 
-    afterEach(() => {
-      process.env = ORIG_ENV;
-    });
-
-    it('reads SR URL from SCHEMA_REGISTRY_URL', async () => {
-      process.env['SCHEMA_REGISTRY_URL'] = 'http://sr-from-env:8081';
-      const s = new TrutherSerde();
-      mockFetch.mockReturnValueOnce(okJson({ id: 1 }));
-      await s.registerSchema('t', '...');
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('sr-from-env'),
-        expect.anything(),
+  describe('consumer security rejections', () => {
+    test('wrong magic byte → INVALID_MAGIC_BYTE', async () => {
+      const sr = await mockSR({ 'transactions-value': 42 });
+      const serde = new TrutherSerde({ srUrl: sr.url });
+      await serde.bind('transactions', Transaction);
+      await expect(serde.consume('transactions', Buffer.from([0x01, 0, 0, 0, 42, 0x02, 0x02, 0x0a]))).rejects.toMatchObject(
+        { code: 'INVALID_MAGIC_BYTE' },
       );
+      await sr.close();
     });
 
-    it('defaults to http://localhost:8081 when no env var set', async () => {
-      delete process.env['SCHEMA_REGISTRY_URL'];
-      const s = new TrutherSerde();
-      mockFetch.mockReturnValueOnce(okJson({ id: 1 }));
-      await s.registerSchema('t', '...');
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('localhost:8081'),
-        expect.anything(),
-      );
+    test('short frame → FRAME_TOO_SHORT', async () => {
+      const sr = await mockSR({ 'transactions-value': 42 });
+      const serde = new TrutherSerde({ srUrl: sr.url });
+      await serde.bind('transactions', Transaction);
+      await expect(serde.consume('transactions', Buffer.from([0x00, 0, 0]))).rejects.toMatchObject({
+        code: 'FRAME_TOO_SHORT',
+      });
+      await sr.close();
+    });
+
+    test('schema_id from another subject → SCHEMA_FOREIGN', async () => {
+      const sr = await mockSR({ 'transactions-value': 42, 'other-value': 99 });
+      const serde = new TrutherSerde({ srUrl: sr.url });
+      await serde.bind('transactions', Transaction);
+      const bad = frameMessage(99, encodeMessageIndexes([1]), Transaction.encode(sampleTx()).finish());
+      await expect(serde.consume('transactions', bad)).rejects.toMatchObject({ code: 'SCHEMA_FOREIGN' });
+      await sr.close();
+    });
+
+    test('message-index mismatch → MESSAGE_INDEX_MISMATCH', async () => {
+      const sr = await mockSR({ 'transactions-value': 42 });
+      const serde = new TrutherSerde({ srUrl: sr.url });
+      await serde.bind('transactions', Transaction); // expects index 1
+      const bad = frameMessage(42, encodeMessageIndexes([0]), Transaction.encode(sampleTx()).finish());
+      await expect(serde.consume('transactions', bad)).rejects.toMatchObject({ code: 'MESSAGE_INDEX_MISMATCH' });
+      await sr.close();
+    });
+
+    test('invalid payload → DESERIALIZATION_ERROR', async () => {
+      const sr = await mockSR({ 'transactions-value': 42 });
+      const serde = new TrutherSerde({ srUrl: sr.url });
+      await serde.bind('transactions', Transaction);
+      const bad = frameMessage(42, encodeMessageIndexes([1]), Buffer.from([0xff, 0xff, 0xff]));
+      await expect(serde.consume('transactions', bad)).rejects.toMatchObject({ code: 'DESERIALIZATION_ERROR' });
+      await sr.close();
     });
   });
 });
