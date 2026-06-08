@@ -1,10 +1,12 @@
 # Cross-language Interop Harness
 
-This directory proves the Confluent SR wire format is correctly implemented across
-Go, Node.js, and Python using the **`sdk/`** packages as the single source of truth.
-No local framing reimplementation — all three harnesses import from `sdk/`.
+Proves that the Go, Node.js and Python SDKs implement the **same Confluent SR wire
+format** by having each language **produce** a message and all three **consume +
+verify** it — against a **real Schema Registry**. The `schema_id` is resolved at
+runtime (no brittle hard-coded fixtures), and all SDKs are used through their thin
+public API (`bind` / `produce` / `consume`).
 
-See [`docs/confluent-sr-serde-spec.md`](../docs/confluent-sr-serde-spec.md) for the full spec.
+See [`docs/confluent-sr-serde-spec.md`](../docs/confluent-sr-serde-spec.md) for the wire spec.
 
 ---
 
@@ -12,85 +14,57 @@ See [`docs/confluent-sr-serde-spec.md`](../docs/confluent-sr-serde-spec.md) for 
 
 ```
 interop/
-  harness.js        ← Node.js harness — imports from sdk/node (@truther/contracts)
-  go/
-    interop_test.go ← Go harness — imports from sdk/go (serde + proto packages)
-    go.mod          ← replace directive pointing to ../../sdk/go
-  python/
-    test_interop.py ← Python harness — imports from truther_contracts (sdk/python)
+  orchestrate.mjs   ← runs the 3×3 produce→consume matrix
+  cli.js            ← Node CLI (ESM)        — imports @truther/contracts (sdk/node)
+  go/main.go        ← Go CLI                — imports sdk/go (serde + proto)
+  python/cli.py     ← Python CLI            — imports truther_contracts (sdk/python)
 ```
+
+Each CLI exposes the same contract:
+
+```
+<runtime> <produce|consume> <topic> <file>
+```
+
+`produce` builds the canonical sample, frames it via the SDK, and writes the bytes to
+`<file>`. `consume` reads `<file>`, runs it through the SDK, and verifies the decoded
+fields. The canonical sample is identical across all three CLIs, so any producer's
+bytes must verify in any consumer.
 
 ---
 
-## Running the harness
-
-### Node.js
+## Running
 
 ```bash
-node interop/harness.js
-```
+# 1. Kafka + Schema Registry
+docker compose up -d
 
-All 6 test groups pass, including the cross-language fixture.
+# 2. Register the schema (the only writer to SR)
+SCHEMA_REGISTRY_URL=http://localhost:8081 python scripts/register_schemas.py
 
-### Go
-
-```bash
-go test ./interop/go/...
-```
-
-All 4 tests pass, including `TestNodeCompatibility` (decodes Node-produced bytes).
-
-### Python
-
-```bash
-# Install the SDK if not already present:
+# 3. Build/link the SDKs the CLIs import
+cd sdk/node && npm install && npm run build && cd ../..
 pip install sdk/python/
-# or editable: pip install -e sdk/python/ --break-system-packages
+cd interop && npm install && cd ..
 
-python3 -m pytest interop/python/test_interop.py -v
+# 4. Run the full cross-language matrix
+SCHEMA_REGISTRY_URL=http://localhost:8081 node interop/orchestrate.mjs
 ```
 
-All 9 tests pass. No skipped tests — `TestProtoRoundTrip` and `TestNodeCompatibility`
-are fully active.
+The orchestrator builds the Go CLI, then runs every producer × every consumer.
 
 ---
 
-## Cross-language matrix
+## Cross-language matrix (all green)
 
-| Producer | Consumer | Status |
-|---|---|---|
-| Node.js | Node.js | ✅ `node interop/harness.js` (Test 1) |
-| Node.js | Go | ✅ `TestNodeCompatibility` in Go |
-| Node.js | Python | ✅ `TestNodeCompatibility` in Python |
-| Go | Node.js | ✅ `Test 6` in harness.js (fixture also validates Go output) |
-| Go | Python | 🔲 full Produce→Consume path needs live or mock SR per language |
-| Python | Node.js | 🔲 full Produce→Consume path needs live or mock SR per language |
-| Python | Go | 🔲 full Produce→Consume path needs live or mock SR per language |
+| Producer ↓ / Consumer → | Node | Go | Python |
+|---|---|---|---|
+| **Node**   | ✅ | ✅ | ✅ |
+| **Go**     | ✅ | ✅ | ✅ |
+| **Python** | ✅ | ✅ | ✅ |
 
----
+All three produce **byte-identical frames** for the same message + schema (same
+`schema_id` from SR, same variable-length `message-index`, same proto3 payload).
 
-## Canonical fixture
-
-The canonical cross-language fixture (schemaId=1) encodes:
-
-```
-Transaction{
-  transactionAmount: "499.99",
-  predictiveAnalyzer: {
-    isAllowed: true, reason: "approved by risk engine",
-    cardId: "card-abc-123", userId: "user-xyz-456",
-    walletAddress: "0xDEADBEEF", allowance: "1000.00"
-  },
-  finalDecision: "APPROVED"
-}
-```
-
-Framed hex (102 bytes):
-
-```
-0000000001000a063439392e3939124c08011217617070726f766564206279207269736b20
-656e67696e651a0c636172642d6162632d313233220c757365722d78797a2d3435362a0a30
-7844454144424545463207313030302e30301a08415050524f564544
-```
-
-This same hex string is embedded directly in each harness — no fixture file needed.
+This same flow runs in CI (`.github/workflows/buf-ci.yml`, job `interop`) against a real
+Kafka + Schema Registry brought up via `docker compose`.

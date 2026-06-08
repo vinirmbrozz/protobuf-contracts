@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "prepare": "tsc",
     "test": "jest --testPathPattern='unit'",
     "test:unit": "jest --testPathPattern='unit'",
     "test:integration": "jest --testPathPattern='integration' --testTimeout=60000",

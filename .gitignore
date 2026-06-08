@@ -14,8 +14,12 @@ npm-debug.log*
 .idea/
 Thumbs.db
 
-# Temporários de Build
+# Temporários de Build (gerados pelo CI / prepare — não versionados)
 *.tsbuildinfo
+dist/
+__pycache__/
+*.pyc
+*.egg-info/
 
 # Legacy gen/python package layout — replaced by gen/python/proto/ (ROD-26)
 gen/python/truther_contracts_sdk/
