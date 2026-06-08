@@ -43,14 +43,17 @@ in the Schema Registry before deserializing.
 The Confluent Protobuf serializer includes a message-index array after the schema ID to identify
 which message type within a `.proto` file is serialized.
 
-Encoding:
-- A single `0x00` byte for the **common case**: the message is the first (and usually only) top-level
-  message in the registered `.proto` schema.
-- For nested or non-first messages: a zigzag-varint array `[count, index0, index1, ...]` where
-  `count` is the number of index entries minus one.
+Encoding (Confluent):
+- A single `0x00` byte is the optimization for the **first** top-level message (index `[0]`).
+- Otherwise a zig-zag varint array: `count`, then each index. A top-level message at index `i`
+  is encoded as `count=1, index=i`.
 
-**Truther standard:** Each `.proto` file registers **one message per schema subject**. With this
-convention the message index is always `0x00`.
+The index identifies **which** message of the `.proto` is serialized, by declaration order. The SDKs
+**derive it from the type's descriptor** — generic for any message, no hard-coded convention.
+
+> ⚠️ A `.proto` can declare several messages. In `transaction.proto`, `PredictiveAnalyzer` is index 0
+> and `Transaction` is index 1 — so the index is **not** always `0x00`. A consumer that hard-coded the
+> index would misread non-first messages (and break interop with other Confluent consumers).
 
 ### 2.4 Protobuf Payload
 
@@ -60,27 +63,28 @@ boundary defines the payload end.
 ### 2.5 Concrete Go framing example
 
 ```go
-// Frame a serialized Transaction for Kafka.
-func FrameMessage(schemaID int32, msgBytes []byte) []byte {
-    out := make([]byte, 6+len(msgBytes))
-    out[0] = 0x00                                     // magic byte
-    binary.BigEndian.PutUint32(out[1:5], uint32(schemaID)) // schema ID
-    out[5] = 0x00                                     // message index (first message)
-    copy(out[6:], msgBytes)
-    return out
+// Frame a serialized message. msgIndex is the Confluent message-index bytes for
+// the message's position in its .proto (§2.3); the SDKs derive it from the type
+// descriptor (a single 0x00 for the first message). See sdk/go/serde.go.
+func FrameMessage(schemaID int32, msgIndex, msgBytes []byte) []byte {
+    out := make([]byte, 0, 5+len(msgIndex)+len(msgBytes))
+    out = append(out, 0x00)                                  // magic byte
+    out = binary.BigEndian.AppendUint32(out, uint32(schemaID))
+    out = append(out, msgIndex...)                           // variable-length message-index
+    return append(out, msgBytes...)
 }
 
-// Parse the Confluent envelope.
-func ParseFrame(data []byte) (schemaID int32, msgBytes []byte, err error) {
+// Parse the Confluent envelope. The payload starts AFTER the variable-length
+// message-index, so it must be read with a zig-zag varint reader (see the SDKs);
+// it is not a fixed offset.
+func ParseFrame(data []byte) (schemaID int32, err error) {
     if len(data) < 6 {
-        return 0, nil, fmt.Errorf("frame too short: %d bytes", len(data))
+        return 0, fmt.Errorf("frame too short: %d bytes", len(data))
     }
     if data[0] != 0x00 {
-        return 0, nil, fmt.Errorf("invalid magic byte: 0x%02x", data[0])
+        return 0, fmt.Errorf("invalid magic byte: 0x%02x", data[0])
     }
-    schemaID = int32(binary.BigEndian.Uint32(data[1:5]))
-    // data[5] is the message index (0x00 = first message, per Truther convention)
-    return schemaID, data[6:], nil
+    return int32(binary.BigEndian.Uint32(data[1:5])), nil
 }
 ```
 
@@ -108,31 +112,44 @@ That pattern is not in scope now; any future change requires a new CTO decision.
 
 ## 4. Schema Registration
 
-### 4.1 Producer flow
+### 4.0 Who registers (out of band — NOT the SDK)
+
+Schemas are registered by the contracts repo's **registrador** (`scripts/register_schemas.py`),
+which reads the real `.proto` and is the **only** writer to the Registry. The language SDKs **never
+register** — they only resolve ids. This keeps the SDKs thin and means a service never carries a
+`.proto` at runtime.
 
 ```
-1. At service startup, for each message type M produced to topic T:
-   a. subject = "<T>-value"
-   b. schema = M.proto file descriptor (the .proto file serialized as a FileDescriptorProto)
-   c. Call SR POST /subjects/<subject>/versions with the schema
-   d. Cache the returned schema_id in memory
+(build/ops) registrador, per topic T in scripts/schemas.json:
+  a. subject = "<T>-value"
+  b. POST /subjects/<subject>/versions { schemaType: PROTOBUF, schema: <.proto text>, references }
+  c. SR assigns schema_id
+```
+
+### 4.1 Producer flow (in the service)
+
+```
+1. At startup, bind topic T → message type M:
+   a. GET /subjects/<T>-value/versions/latest → schema_id   (resolve; read-only)
+   b. cache schema_id; precompute M's message-index from its descriptor (§2.3)
 2. On each Produce(msg):
    a. Serialize msg to proto3 binary → msgBytes
-   b. Write frame: [0x00][schema_id_be4][0x00][msgBytes]
+   b. Write frame: [0x00][schema_id_be4][message-index][msgBytes]
    c. Publish framed bytes to Kafka
 ```
 
-Producers MUST register schemas **eagerly at startup**, not lazily on first message. This ensures
-the schema is available before the first consumer starts.
+The producer **resolves** the id at startup (fail-fast if the subject isn't registered yet) — it does
+not register.
 
 ### 4.2 Consumer flow
 
 ```
 1. On each consumed Kafka message value:
    a. Check byte[0] == 0x00; reject if not
-   b. schema_id = BigEndian(bytes[1:5])
-   c. Verify schema_id is registered (cache SR lookup by ID)
-   d. message_type = resolve(schema_id) → known registered type
+   b. schema_id = BigEndian(bytes[1:5]); read the variable-length message-index
+   c. Verify schema_id is a **registered version of this topic's subject** (GET
+      /schemas/ids/<id>/versions; reject ids from another subject or unknown to SR)
+   d. Verify the message-index matches the bound type; deserialize into it
    e. Deserialize bytes[6:] using the known type's proto3 decoder
    f. Validate: run protovalidate rules on the decoded message
    g. Route to handler; on any error → DLQ
@@ -288,15 +305,16 @@ without going through the typed deserializer.
 
 ## 10. Reference Implementation
 
-See [`interop/harness.js`](../interop/harness.js) for a Node.js reference implementation of:
-- Confluent envelope framing / unframing
-- Round-trip serialize → frame → unframe → deserialize
-- Rejection of invalid magic byte
-- Rejection of unknown schema_id
+The authoritative reference implementations are the SDKs: [`sdk/go`](../sdk/go/),
+[`sdk/node`](../sdk/node/) and [`sdk/python`](../sdk/python/) — each implements framing/unframing,
+the variable-length message-index (§2.3), schema_id resolution, subject-scoped validation, and
+typed rejections (→ DLQ).
 
-The harness is executable today without Kafka or Schema Registry (uses mock schema_id = 1).
-Cross-language equivalents in [`interop/go/`](../interop/go/) and [`interop/python/`](../interop/python/)
-will pass once the per-language Kafka libs exist.
+The [`interop/`](../interop/) harness proves they interoperate: each language produces a frame and all
+three consume + verify it, against a **real** Schema Registry. Run it with
+`node interop/orchestrate.mjs` (after `docker compose up -d` + `scripts/register_schemas.py`); it also
+runs in CI (`buf-ci.yml`, job `interop`). The full 3×3 matrix is green — see
+[`interop/README.md`](../interop/README.md).
 
 ---
 
