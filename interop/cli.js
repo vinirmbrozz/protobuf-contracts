@@ -11,29 +11,22 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { ProtobufSerde, Transaction } from '@protobuf/contracts';
 
+// Scalar string fields only → byte-identical wire across Go/Node/Python.
 const SAMPLE = {
-  transactionAmount: '499.99',
-  finalDecision: 'APPROVED',
-  predictiveAnalyzer: {
-    isAllowed: true,
-    reason: 'approved',
-    cardId: 'card-1',
-    userId: 'user-1',
-    walletAddress: '0xABC',
-    allowance: '1000.00',
-    transactionId: 'tx-1',
-    name: 'n',
-  },
+  transaction: { id: 'tx-1', amountTotal: '499.99', channel: 'web', type: 'PIX' },
+  customer: { name: 'Ada Lovelace', email: 'ada@example.com' },
 };
 
 function verify(tx) {
-  const pa = tx.predictiveAnalyzer ?? {};
+  const d = tx.transaction ?? {};
+  const c = tx.customer ?? {};
   const ok =
-    tx.transactionAmount === SAMPLE.transactionAmount &&
-    tx.finalDecision === SAMPLE.finalDecision &&
-    pa.isAllowed === true &&
-    pa.cardId === 'card-1' &&
-    pa.walletAddress === '0xABC';
+    d.id === 'tx-1' &&
+    d.amountTotal === '499.99' &&
+    d.channel === 'web' &&
+    d.type === 'PIX' &&
+    c.name === 'Ada Lovelace' &&
+    c.email === 'ada@example.com';
   if (!ok) {
     console.error('node: MISMATCH', JSON.stringify(tx));
     process.exit(1);

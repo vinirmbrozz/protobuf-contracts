@@ -1,9 +1,10 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { ProtobufSerde, SerdeError } from '../serde';
+import { ProtobufSerde } from '../serde';
 import { encodeMessageIndexes, frameMessage } from '../framing';
-import { Transaction, PredictiveAnalyzer } from '../generated/proto/transaction';
+import { Transaction } from '../generated/protobuf/transaction/v1/transaction';
+import { OnboardingCustomer } from '../generated/protobuf/onboarding/v1/onboarding';
 
 /**
  * Read-only mock Schema Registry seeded with subject→id. Serves:
@@ -44,14 +45,13 @@ async function mockSR(subjectId: Record<string, number>): Promise<{ url: string;
 
 function sampleTx(): Transaction {
   return Transaction.create({
-    transactionAmount: '9.99',
-    finalDecision: 'APPROVED',
-    predictiveAnalyzer: PredictiveAnalyzer.create({ isAllowed: true, reason: 'ok', cardId: 'c1' }),
+    transaction: { id: 'tx-1', amountTotal: '9.99', channel: 'web', type: 'PIX' },
+    customer: { name: 'Ada', email: 'ada@example.com' },
   });
 }
 
 describe('ProtobufSerde (thin, mock SR)', () => {
-  test('round-trip Transaction (index 1 → variable msg-index)', async () => {
+  test('round-trip Transaction (index 0 → 0x00 msg-index)', async () => {
     const sr = await mockSR({ 'transactions-value': 42 });
     const serde = new ProtobufSerde({ srUrl: sr.url });
     await serde.bind('transactions', Transaction);
@@ -60,21 +60,24 @@ describe('ProtobufSerde (thin, mock SR)', () => {
     const framed = serde.produce('transactions', original);
     expect(framed[0]).toBe(0x00);
     expect(framed.readUInt32BE(1)).toBe(42);
-    expect([...framed.subarray(5, 7)]).toEqual([0x02, 0x02]); // msg-index for index 1
+    expect(framed[5]).toBe(0x00); // index 0 → single 0x00 byte
 
     const got = await serde.consume<Transaction>('transactions', framed);
     expect(got).toEqual(original);
     await sr.close();
   });
 
-  test('round-trip PredictiveAnalyzer (index 0 → 0x00)', async () => {
-    const sr = await mockSR({ 'predictions-value': 7 });
+  test('round-trip OnboardingCustomer (index 1 → variable msg-index)', async () => {
+    const sr = await mockSR({ 'cust-value': 7 });
     const serde = new ProtobufSerde({ srUrl: sr.url });
-    await serde.bind('predictions', PredictiveAnalyzer);
+    await serde.bind('cust', OnboardingCustomer);
 
-    const framed = serde.produce('predictions', PredictiveAnalyzer.create({ isAllowed: true }));
-    expect(framed[5]).toBe(0x00);
-    expect(await serde.consume('predictions', framed)).toBeDefined();
+    const original = OnboardingCustomer.create({ id: 'c-1' });
+    const framed = serde.produce('cust', original);
+    expect([...framed.subarray(5, 7)]).toEqual([0x02, 0x02]); // msg-index for index 1
+
+    const got = await serde.consume<OnboardingCustomer>('cust', framed);
+    expect(got).toEqual(original);
     await sr.close();
   });
 
@@ -91,7 +94,7 @@ describe('ProtobufSerde (thin, mock SR)', () => {
     expect(() => serde.produce('transactions', sampleTx())).toThrow(
       expect.objectContaining({ code: 'TOPIC_NOT_BOUND' }),
     );
-    await expect(serde.consume('transactions', Buffer.from([0x00, 0, 0, 0, 42, 0x02, 0x02]))).rejects.toMatchObject({
+    await expect(serde.consume('transactions', Buffer.from([0x00, 0, 0, 0, 42, 0x00, 0x0a]))).rejects.toMatchObject({
       code: 'TOPIC_NOT_BOUND',
     });
     await sr.close();
@@ -102,7 +105,7 @@ describe('ProtobufSerde (thin, mock SR)', () => {
       const sr = await mockSR({ 'transactions-value': 42 });
       const serde = new ProtobufSerde({ srUrl: sr.url });
       await serde.bind('transactions', Transaction);
-      await expect(serde.consume('transactions', Buffer.from([0x01, 0, 0, 0, 42, 0x02, 0x02, 0x0a]))).rejects.toMatchObject(
+      await expect(serde.consume('transactions', Buffer.from([0x01, 0, 0, 0, 42, 0x00, 0x0a]))).rejects.toMatchObject(
         { code: 'INVALID_MAGIC_BYTE' },
       );
       await sr.close();
@@ -122,7 +125,7 @@ describe('ProtobufSerde (thin, mock SR)', () => {
       const sr = await mockSR({ 'transactions-value': 42, 'other-value': 99 });
       const serde = new ProtobufSerde({ srUrl: sr.url });
       await serde.bind('transactions', Transaction);
-      const bad = frameMessage(99, encodeMessageIndexes([1]), Transaction.encode(sampleTx()).finish());
+      const bad = frameMessage(99, encodeMessageIndexes([0]), Transaction.encode(sampleTx()).finish());
       await expect(serde.consume('transactions', bad)).rejects.toMatchObject({ code: 'SCHEMA_FOREIGN' });
       await sr.close();
     });
@@ -130,8 +133,8 @@ describe('ProtobufSerde (thin, mock SR)', () => {
     test('message-index mismatch → MESSAGE_INDEX_MISMATCH', async () => {
       const sr = await mockSR({ 'transactions-value': 42 });
       const serde = new ProtobufSerde({ srUrl: sr.url });
-      await serde.bind('transactions', Transaction); // expects index 1
-      const bad = frameMessage(42, encodeMessageIndexes([0]), Transaction.encode(sampleTx()).finish());
+      await serde.bind('transactions', Transaction); // expects index 0
+      const bad = frameMessage(42, encodeMessageIndexes([1]), Transaction.encode(sampleTx()).finish());
       await expect(serde.consume('transactions', bad)).rejects.toMatchObject({ code: 'MESSAGE_INDEX_MISMATCH' });
       await sr.close();
     });
@@ -140,7 +143,7 @@ describe('ProtobufSerde (thin, mock SR)', () => {
       const sr = await mockSR({ 'transactions-value': 42 });
       const serde = new ProtobufSerde({ srUrl: sr.url });
       await serde.bind('transactions', Transaction);
-      const bad = frameMessage(42, encodeMessageIndexes([1]), Buffer.from([0xff, 0xff, 0xff]));
+      const bad = frameMessage(42, encodeMessageIndexes([0]), Buffer.from([0xff, 0xff, 0xff]));
       await expect(serde.consume('transactions', bad)).rejects.toMatchObject({ code: 'DESERIALIZATION_ERROR' });
       await sr.close();
     });
