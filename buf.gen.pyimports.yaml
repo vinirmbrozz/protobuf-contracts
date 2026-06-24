@@ -1,0 +1,14 @@
+# Python SDK generation, run with `buf generate --include-imports`.
+#
+# Unlike Go (which pulls protovalidate's types from a BSR Go module) and TS
+# (ts-proto emits imported deps inline), the protoc Python plugin emits only the
+# local files. protovalidate ships no importable buf.validate package, so the
+# generated *_pb2.py would fail on `from buf.validate import validate_pb2`.
+#
+# --include-imports generates all NON-WKT imports too, so buf/validate/*_pb2.py
+# land in the SDK (self-contained). Well-Known Types (google/*) are excluded —
+# those come from the protobuf runtime at import time.
+version: v1
+plugins:
+  - name: python
+    out: sdk/python

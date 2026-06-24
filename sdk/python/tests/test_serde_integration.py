@@ -11,7 +11,7 @@ import struct
 
 import pytest
 
-from protobuf_contracts import Transaction, PredictiveAnalyzer
+from protobuf_contracts import Transaction, TransactionData, Customer
 from protobuf_contracts.serde import KafkaSerde, SchemaForeignError, _encode_indexes
 
 SR_URL = os.environ.get("SCHEMA_REGISTRY_URL")
@@ -24,9 +24,8 @@ def test_roundtrip_against_real_sr():
     serde.bind("transactions", Transaction)
 
     original = Transaction(
-        transactionAmount="9.99",
-        final_decision="APPROVED",
-        predictiveAnalyzer=PredictiveAnalyzer(isAllowed=True, reason="ok"),
+        transaction=TransactionData(id="tx-1", amount_total="9.99", channel="web", type="PIX"),
+        customer=Customer(name="Ada", email="ada@example.com"),
     )
     framed = serde.produce("transactions", original)
     assert serde.consume("transactions", framed) == original
@@ -35,6 +34,6 @@ def test_roundtrip_against_real_sr():
 def test_bogus_id_rejected_by_real_sr():
     serde = KafkaSerde(sr_url=SR_URL)
     serde.bind("transactions", Transaction)
-    bad = struct.pack(">BI", 0x00, 987654) + _encode_indexes([1]) + Transaction().SerializeToString()
+    bad = struct.pack(">BI", 0x00, 987654) + _encode_indexes([0]) + Transaction().SerializeToString()
     with pytest.raises(SchemaForeignError):
         serde.consume("transactions", bad)

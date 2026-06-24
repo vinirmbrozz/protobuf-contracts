@@ -9,22 +9,13 @@ SCHEMA_REGISTRY_URL from the environment.
 """
 import sys
 
-from protobuf_contracts import Transaction, PredictiveAnalyzer
+from protobuf_contracts import Transaction, TransactionData, Customer
 from protobuf_contracts.serde import KafkaSerde
 
+# Scalar string fields only → byte-identical wire across Go/Node/Python.
 SAMPLE = Transaction(
-    transactionAmount="499.99",
-    final_decision="APPROVED",
-    predictiveAnalyzer=PredictiveAnalyzer(
-        isAllowed=True,
-        reason="approved",
-        cardId="card-1",
-        userId="user-1",
-        walletAddress="0xABC",
-        allowance="1000.00",
-        transactionId="tx-1",
-        name="n",
-    ),
+    transaction=TransactionData(id="tx-1", amount_total="499.99", channel="web", type="PIX"),
+    customer=Customer(name="Ada Lovelace", email="ada@example.com"),
 )
 
 

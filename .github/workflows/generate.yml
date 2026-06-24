@@ -7,6 +7,7 @@ on:
     paths:
       - 'proto/**'
       - 'buf.gen.yaml'
+      - 'buf.gen.pyimports.yaml'
       - 'buf.yaml'
 
 jobs:
@@ -55,6 +56,11 @@ jobs:
       # Single source of truth: buf.gen.yaml drives all code generation.
       - name: Run buf generate
         run: buf generate
+
+      # Python SDK: --include-imports also emits buf/validate/*_pb2.py (non-WKT)
+      # so the SDK is self-contained; WKTs (google/*) come from the runtime.
+      - name: Generate Python SDK (with imports)
+        run: buf generate --include-imports --template buf.gen.pyimports.yaml
 
       # Embed the FileDescriptorSet so the Node SDK can resolve message indexes
       # generically at runtime (ts-proto, unlike Go/Python, embeds no descriptor).

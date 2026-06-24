@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from protobuf_contracts import Transaction, PredictiveAnalyzer
+from protobuf_contracts import Transaction, TransactionData, Customer, OnboardingCustomer
 from protobuf_contracts.serde import (
     KafkaSerde,
     InvalidMagicByteError,
@@ -75,9 +75,8 @@ def mock_sr():
 
 def _sample_tx():
     return Transaction(
-        transactionAmount="9.99",
-        final_decision="APPROVED",
-        predictiveAnalyzer=PredictiveAnalyzer(isAllowed=True, reason="ok", cardId="c1"),
+        transaction=TransactionData(id="tx-1", amount_total="9.99", channel="web", type="PIX"),
+        customer=Customer(name="Ada", email="ada@example.com"),
     )
 
 
@@ -88,7 +87,7 @@ def _frame(schema_id, msg_index_bytes, payload):
 # ── round-trip ───────────────────────────────────────────────────────────────
 
 
-def test_roundtrip_transaction_index_1(mock_sr):
+def test_roundtrip_transaction_index_0(mock_sr):
     serde = KafkaSerde(sr_url=mock_sr({"transactions-value": 42}))
     serde.bind("transactions", Transaction)
 
@@ -96,18 +95,20 @@ def test_roundtrip_transaction_index_1(mock_sr):
     framed = serde.produce("transactions", original)
     assert framed[0] == 0x00
     assert struct.unpack(">I", framed[1:5])[0] == 42
-    assert framed[5:7] == b"\x02\x02"  # msg-index for index 1
+    assert framed[5] == 0x00  # Transaction is the 1st message → single 0x00 byte
 
     got = serde.consume("transactions", framed)
     assert got == original
 
 
-def test_roundtrip_predictive_index_0(mock_sr):
-    serde = KafkaSerde(sr_url=mock_sr({"predictions-value": 7}))
-    serde.bind("predictions", PredictiveAnalyzer)
-    framed = serde.produce("predictions", PredictiveAnalyzer(isAllowed=True))
-    assert framed[5] == 0x00  # single-byte index 0
-    assert serde.consume("predictions", framed).isAllowed is True
+def test_roundtrip_variable_index(mock_sr):
+    # OnboardingCustomer is the 2nd message in onboarding.proto (index 1).
+    serde = KafkaSerde(sr_url=mock_sr({"cust-value": 7}))
+    serde.bind("cust", OnboardingCustomer)
+    original = OnboardingCustomer(id="c-1")
+    framed = serde.produce("cust", original)
+    assert framed[5:7] == b"\x02\x02"  # variable msg-index for index 1
+    assert serde.consume("cust", framed) == original
 
 
 # ── bind / not-bound ──────────────────────────────────────────────────────────
@@ -124,7 +125,7 @@ def test_produce_consume_unbound(mock_sr):
     with pytest.raises(TopicNotBoundError):
         serde.produce("transactions", _sample_tx())
     with pytest.raises(TopicNotBoundError):
-        serde.consume("transactions", b"\x00\x00\x00\x00\x2a\x02\x02")
+        serde.consume("transactions", b"\x00\x00\x00\x00\x2a\x00\x0a")
 
 
 # ── consumer security rejections ──────────────────────────────────────────────
@@ -134,7 +135,7 @@ def test_invalid_magic(mock_sr):
     serde = KafkaSerde(sr_url=mock_sr({"transactions-value": 42}))
     serde.bind("transactions", Transaction)
     with pytest.raises(InvalidMagicByteError):
-        serde.consume("transactions", b"\x01\x00\x00\x00\x2a\x02\x02\x0a")
+        serde.consume("transactions", b"\x01\x00\x00\x00\x2a\x00\x0a")
 
 
 def test_frame_too_short(mock_sr):
@@ -147,15 +148,15 @@ def test_frame_too_short(mock_sr):
 def test_foreign_subject_id(mock_sr):
     serde = KafkaSerde(sr_url=mock_sr({"transactions-value": 42, "other-value": 99}))
     serde.bind("transactions", Transaction)
-    bad = _frame(99, _encode_indexes([1]), _sample_tx().SerializeToString())
+    bad = _frame(99, _encode_indexes([0]), _sample_tx().SerializeToString())
     with pytest.raises(SchemaForeignError):
         serde.consume("transactions", bad)
 
 
 def test_message_index_mismatch(mock_sr):
     serde = KafkaSerde(sr_url=mock_sr({"transactions-value": 42}))
-    serde.bind("transactions", Transaction)  # expects index 1
-    bad = _frame(42, _encode_indexes([0]), _sample_tx().SerializeToString())
+    serde.bind("transactions", Transaction)  # expects index 0
+    bad = _frame(42, _encode_indexes([1]), _sample_tx().SerializeToString())
     with pytest.raises(MessageIndexMismatchError):
         serde.consume("transactions", bad)
 
@@ -163,6 +164,6 @@ def test_message_index_mismatch(mock_sr):
 def test_invalid_payload(mock_sr):
     serde = KafkaSerde(sr_url=mock_sr({"transactions-value": 42}))
     serde.bind("transactions", Transaction)
-    bad = _frame(42, _encode_indexes([1]), b"\xff\xff\xff")
+    bad = _frame(42, _encode_indexes([0]), b"\xff\xff\xff")
     with pytest.raises(DeserializeError):
         serde.consume("transactions", bad)
