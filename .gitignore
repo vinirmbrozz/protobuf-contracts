@@ -20,6 +20,7 @@ dist/
 __pycache__/
 *.pyc
 *.egg-info/
+.pytest_cache/
 
 # Legacy gen/python package layout — replaced by gen/python/proto/ (ROD-26)
 gen/python/truther_contracts_sdk/
