@@ -44,7 +44,7 @@ message TransactionData {
   string amount_total = 4 [(buf.validate.field).cel = {
     id: "transaction.amount_total.gt_zero"
     message: "amount_total must be a decimal string greater than 0"
-    expression: "this.matches('^[0-9]+([.][0-9]+)?$') && double(this) > 0"
+    expression: "this.matches('^[0-9]+([.][0-9]+)?$') && double(this) > 0.0"
   }];
   int32 instalments = 5;
   google.protobuf.Timestamp datetime_request = 6 [(buf.validate.field).required = true];
