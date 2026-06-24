@@ -8,10 +8,10 @@
 import { BinaryReader, BinaryWriter } from "@bufbuild/protobuf/wire";
 import { messageTypeRegistry } from "../typeRegistry";
 
-export const protobufPackage = "truther.transaction";
+export const protobufPackage = "protobuf.transaction";
 
 export interface PredictiveAnalyzer {
-  $type: "truther.transaction.PredictiveAnalyzer";
+  $type: "protobuf.transaction.PredictiveAnalyzer";
   isAllowed: boolean;
   reason: string;
   cardId: string;
@@ -23,7 +23,7 @@ export interface PredictiveAnalyzer {
 }
 
 export interface Transaction {
-  $type: "truther.transaction.Transaction";
+  $type: "protobuf.transaction.Transaction";
   transactionAmount: string;
   predictiveAnalyzer: PredictiveAnalyzer | undefined;
   finalDecision: string;
@@ -31,7 +31,7 @@ export interface Transaction {
 
 function createBasePredictiveAnalyzer(): PredictiveAnalyzer {
   return {
-    $type: "truther.transaction.PredictiveAnalyzer",
+    $type: "protobuf.transaction.PredictiveAnalyzer",
     isAllowed: false,
     reason: "",
     cardId: "",
@@ -43,8 +43,8 @@ function createBasePredictiveAnalyzer(): PredictiveAnalyzer {
   };
 }
 
-export const PredictiveAnalyzer: MessageFns<PredictiveAnalyzer, "truther.transaction.PredictiveAnalyzer"> = {
-  $type: "truther.transaction.PredictiveAnalyzer" as const,
+export const PredictiveAnalyzer: MessageFns<PredictiveAnalyzer, "protobuf.transaction.PredictiveAnalyzer"> = {
+  $type: "protobuf.transaction.PredictiveAnalyzer" as const,
 
   encode(message: PredictiveAnalyzer, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.isAllowed !== false) {
@@ -218,15 +218,15 @@ messageTypeRegistry.set(PredictiveAnalyzer.$type, PredictiveAnalyzer);
 
 function createBaseTransaction(): Transaction {
   return {
-    $type: "truther.transaction.Transaction",
+    $type: "protobuf.transaction.Transaction",
     transactionAmount: "",
     predictiveAnalyzer: undefined,
     finalDecision: "",
   };
 }
 
-export const Transaction: MessageFns<Transaction, "truther.transaction.Transaction"> = {
-  $type: "truther.transaction.Transaction" as const,
+export const Transaction: MessageFns<Transaction, "protobuf.transaction.Transaction"> = {
+  $type: "protobuf.transaction.Transaction" as const,
 
   encode(message: Transaction, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.transactionAmount !== "") {
