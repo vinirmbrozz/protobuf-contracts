@@ -20,11 +20,11 @@ tipada** de produce/consume que embrulha a mensagem no **envelope Confluent** e 
 ## 1. Formato de fio (o coração)
 Toda mensagem no Kafka vai dentro do **envelope Confluent**:
 ```
-[ Magic Byte 0x00 ][ Schema ID (4 bytes, big-endian) ][ Message Index (0x00) ][ Payload protobuf ]
+[ Magic Byte 0x00 ][ Schema ID (4 bytes, big-endian) ][ Message Index ][ Payload protobuf ]
 ```
 - **Magic byte** sempre `0x00` — consumidor rejeita qualquer outro 1º byte.
 - **Schema ID** — número que o Schema Registry deu ao schema; diz "sigo o contrato nº N".
-- **Message index** — qual mensagem no `.proto`; convenção Protobuf = 1 msg por subject → sempre `0x00`.
+- **Message index** — qual mensagem no `.proto` (ordem de declaração), **derivado do descriptor**; tamanho variável. Índice 0 é a otimização de 1 byte `0x00`; um arquivo com várias mensagens usa o índice de cada uma.
 - **Payload** — proto3 binário (sem prefixo de tamanho).
 
 Cabeçalho fixo de 6 bytes + payload. **Isto é o portão**: produtor embrulha com o id; consumidor
@@ -62,7 +62,7 @@ Prova que Go/Node/Python falam **o mesmo contrato byte a byte** — contra um **
 
 ## 6. O `proto` em si
 `proto/transaction.proto` é um **exemplo/seed** (não a estrutura final). Anatomia: `message` = struct;
-campo = `tipo nome = número;`; mensagens compõem (Transaction contém PredictiveAnalyzer).
+campo = `tipo nome = número;`; mensagens compõem (Transaction contém TransactionData, Customer, etc.).
 Convenções para os protos reais: snake_case, numerar de 1 sem reusar, **enum** (com `_UNSPECIFIED=0`)
 em vez de string livre, validação (protovalidate) já no desenho, dinheiro como string/inteiro (nunca float).
 

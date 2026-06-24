@@ -27,3 +27,4 @@ gen/python/protobuf_contracts_sdk/
 # Go build artifacts
 interop/go/go.exe
 *.exe
+build/

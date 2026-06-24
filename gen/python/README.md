@@ -1,28 +1,18 @@
-# Protobuf Contracts SDK - Python
+# Protobuf Contracts — Python (generated record)
 
-## Installation
-```bash
-pip install git+https://github.com/vinirmbrozz/protobuf-contracts.git#subdirectory=gen/python
-```
+`gen/python/` is the **canonical codegen record** (raw `buf generate` output). For real use,
+import the **publishable SDK** in `sdk/python/` (`protobuf-contracts`), which adds the Confluent
+SR serde (`bind`/`produce`/`consume`) — see [`sdk/python`](../../sdk/python).
 
-## Usage
 ```python
-from transaction_pb2 import Transaction, PredictiveAnalyzer
+from protobuf_contracts import Transaction, TransactionData
+from protobuf_contracts.serde import KafkaSerde
 
-analyzer = PredictiveAnalyzer(
-    isAllowed=True,
-    reason="Approved",
-    cardId="card-123",
-    userId="user-456",
-    walletAddress="0x...",
-    allowance="5000.00"
-)
+serde = KafkaSerde()                       # reads SCHEMA_REGISTRY_URL
+serde.bind("transactions", Transaction)    # resolves schema_id (read-only)
 
-transaction = Transaction(
-    transactionAmount="100.00",
-    predictiveAnalyzer=analyzer,
-    final_decision="APPROVED"
-)
-
-print(transaction)
+framed = serde.produce("transactions", Transaction(
+    transaction=TransactionData(id="tx-1", amount_total="100.00", channel="web", type="PIX"),
+))
+tx = serde.consume("transactions", framed) # -> Transaction (or SerdeError → DLQ)
 ```

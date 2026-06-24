@@ -40,8 +40,7 @@ await serde.bind('transactions', Transaction);     // resolves the schema_id fro
 
 // Produce
 const framed = serde.produce('transactions', Transaction.fromPartial({
-  transactionAmount: '9.99',
-  finalDecision: 'APPROVED',
+  transaction: { id: 'tx-1', amountTotal: '9.99', channel: 'web', type: 'PIX' },
 }));
 await kafkaProducer.send({ topic: 'transactions', messages: [{ value: framed }] });
 

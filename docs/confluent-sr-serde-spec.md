@@ -51,9 +51,9 @@ Encoding (Confluent):
 The index identifies **which** message of the `.proto` is serialized, by declaration order. The SDKs
 **derive it from the type's descriptor** — generic for any message, no hard-coded convention.
 
-> ⚠️ A `.proto` can declare several messages. In `transaction.proto`, `PredictiveAnalyzer` is index 0
-> and `Transaction` is index 1 — so the index is **not** always `0x00`. A consumer that hard-coded the
-> index would misread non-first messages (and break interop with other Confluent consumers).
+> ⚠️ A `.proto` can declare several messages. In `transaction.proto`, `Transaction` is index 0 and
+> `Device`, `TransactionData`, … follow — so the index is **not** universally `0x00`. A consumer that
+> hard-coded the index would misread non-first messages (and break interop with other Confluent consumers).
 
 ### 2.4 Protobuf Payload
 
@@ -196,19 +196,22 @@ These changes REQUIRE a new version/migration (see §6):
 Validation is enforced **at the consumer** using [protovalidate](https://github.com/bufbuild/protovalidate).
 
 Standard rules for Protobuf messages:
-- All ID fields (`*_id`, `*Id`) — `string.min_len: 1` (non-empty UUID-like)
-- Amount fields (`transaction_amount`) — `string.pattern: "^[0-9]+(\\.[0-9]{1,8})?$"`
-- Boolean decision fields — no special rule, default false is valid
+- Required ID fields (`id`) — `string.min_len: 1` (non-empty)
+- Amount fields (`amount_total`) — decimal string, validated `> 0` via CEL
+- Enum fields (`pix_key_type`) — `repeated.items.enum.defined_only`
 
-Example proto annotation (add to proto when protovalidate buf plugin is wired in CI):
+protovalidate is wired (dep in `buf.yaml`, resolved by `buf dep update` in CI). Example, as used in
+`transaction.proto`:
 ```protobuf
 import "buf/validate/validate.proto";
 
-message PredictiveAnalyzer {
-  bool isAllowed = 1;
-  string reason = 2;
-  string cardId = 3 [(buf.validate.field).string.min_len = 1];
-  string userId = 4 [(buf.validate.field).string.min_len = 1];
+message TransactionData {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  string amount_total = 4 [(buf.validate.field).cel = {
+    id: "transaction.amount_total.gt_zero"
+    message: "amount_total must be a decimal string greater than 0"
+    expression: "this.matches('^[0-9]+([.][0-9]+)?$') && double(this) > 0.0"
+  }];
   // ...
 }
 ```

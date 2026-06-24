@@ -14,22 +14,25 @@ proto/
     <entity>.proto    # one .proto per top-level message or small message cluster
 ```
 
-Current layout:
+Current layout (buf-idiomatic: directory path = package, version suffix):
 ```
 proto/
-  transaction.proto   # protobuf.transaction package — Transaction + PredictiveAnalyzer
+  protobuf/transaction/v1/transaction.proto   # package protobuf.transaction.v1
+  protobuf/onboarding/v1/onboarding.proto      # package protobuf.onboarding.v1
+  protobuf/type/v1/{address,registration,banking,pix}.proto  # protobuf.type.v1 (shared)
 ```
 
 ### 1.1 Package naming
 
 ```protobuf
 syntax = "proto3";
-package protobuf.<domain>;
-option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/<domain>";
+package protobuf.<domain>.v1;
+option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/protobuf/<domain>/v1;<domain>v1";
 ```
 
-As new domains are added, create `proto/<domain>/<entity>.proto` with package
-`protobuf.<domain>`.
+As new domains are added, create `proto/protobuf/<domain>/v1/<entity>.proto` with package
+`protobuf.<domain>.v1`. The buf module roots at `proto/` (`buf.yaml` v2), so the directory matches
+the package. A breaking change bumps the version (`v2`) alongside `v1`.
 
 ### 1.2 Field naming
 
@@ -155,8 +158,8 @@ the generated SDKs as packages published from `gen/`.
 
 ## 6. Tech Debt
 
-| Item | Impact | Resolution |
-|---|---|---|
-| camelCase field names in `transaction.proto` | Fails `FIELD_LOWER_SNAKE_CASE` lint (currently excluded) | Rename to `snake_case` in a coordinated migration with all consumers |
-| `final_decision` (snake_case) vs other fields (camelCase) | Inconsistent naming in same message | Fix in same migration as above |
-| No protovalidate annotations yet | Field validation not enforced on consume | Add after CTO confirms buf BSR dependency (pending D-series decisions) |
+The seed mock's debts are **resolved** by the real versioned contracts:
+- camelCase field names → all fields are `snake_case`; the `FIELD_LOWER_SNAKE_CASE` lint exception was
+  dropped (`buf.yaml` v2 uses the full `STANDARD` set with no exceptions).
+- protovalidate annotations → wired (dep in `buf.yaml`, resolved by `buf dep update` in CI; rules ported
+  from the source `Valid()`).

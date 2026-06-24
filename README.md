@@ -185,15 +185,16 @@ tipado, para o adapter rotear à **DLQ**) se:
 ```go
 import (
     serde "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
-    txpb  "github.com/vinirmbrozz/protobuf-contracts/sdk/go/proto"
+    txpb  "github.com/vinirmbrozz/protobuf-contracts/sdk/go/protobuf/transaction/v1"
 )
 
 s, _ := serde.New()                              // lê SCHEMA_REGISTRY_URL
 _ = s.Bind("transactions", &txpb.Transaction{})  // resolve o schema_id no Registry
 
 frame, _ := s.Produce("transactions", &txpb.Transaction{
-    TransactionAmount: "9.99",
-    FinalDecision:     "APPROVED",
+    Transaction: &txpb.TransactionData{
+        Id: "tx-1", AmountTotal: "9.99", Channel: "web", Type: "PIX",
+    },
 })
 
 msg, _ := s.Consume("transactions", kafkaBytes)  // erro tipado → DLQ
@@ -209,8 +210,7 @@ const serde = new ProtobufSerde();                 // lê SCHEMA_REGISTRY_URL
 await serde.bind('transactions', Transaction);    // resolve o schema_id
 
 const frame = serde.produce('transactions', Transaction.fromPartial({
-  transactionAmount: '9.99',
-  finalDecision: 'APPROVED',
+  transaction: { id: 'tx-1', amountTotal: '9.99', channel: 'web', type: 'PIX' },
 }));
 
 const tx = await serde.consume('transactions', kafkaBytes); // SerdeError → DLQ
@@ -219,15 +219,14 @@ const tx = await serde.consume('transactions', kafkaBytes); // SerdeError → DL
 ### Python
 
 ```python
-from protobuf_contracts import Transaction
+from protobuf_contracts import Transaction, TransactionData
 from protobuf_contracts.serde import KafkaSerde
 
 serde = KafkaSerde()                              # lê SCHEMA_REGISTRY_URL
 serde.bind("transactions", Transaction)           # resolve o schema_id
 
 frame = serde.produce("transactions", Transaction(
-    transactionAmount="9.99",
-    final_decision="APPROVED",
+    transaction=TransactionData(id="tx-1", amount_total="9.99", channel="web", type="PIX"),
 ))
 
 tx = serde.consume("transactions", kafka_bytes)   # SerdeError → DLQ
