@@ -1,3 +1,25 @@
-[
-  { "topic": "transactions", "proto": "transaction.proto" }
-]
+{
+  "libraries": [
+    {
+      "subject": "proto/shared.proto",
+      "proto": "shared.proto"
+    },
+    {
+      "subject": "buf/validate/validate.proto",
+      "path": "vendor/protovalidate/buf/validate/validate.proto",
+      "note": "vendor once via: buf export buf.build/bufbuild/protovalidate -o vendor/protovalidate (buf runs on CI/Linux, not the Windows host)"
+    }
+  ],
+  "topics": [
+    {
+      "topic": "transactions",
+      "proto": "transaction.proto",
+      "references": ["proto/shared.proto", "buf/validate/validate.proto"]
+    },
+    {
+      "topic": "onboarding",
+      "proto": "onboarding.proto",
+      "references": ["proto/shared.proto", "buf/validate/validate.proto"]
+    }
+  ]
+}

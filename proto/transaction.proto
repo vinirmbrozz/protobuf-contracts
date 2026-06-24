@@ -1,22 +1,138 @@
 syntax = "proto3";
 
+// Transaction contract — mirrors POST /api/v1/fraud/transactions/
+// (CreateTransactionReq) in data-rudder-provider: the event submitted for fraud
+// analysis. Conventions: money is a decimal string (never float); fixed-value
+// fields are enums; instants use google.protobuf.Timestamp; free-form payloads
+// use google.protobuf.Struct. Field-level rules port the Go CreateTransactionReq.Valid().
 package protobuf.transaction;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "proto/shared.proto";
 
 option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/transaction";
 
-message PredictiveAnalyzer {
-  bool isAllowed = 1;
-  string reason = 2;
-  string cardId = 3;
-  string userId = 4;
-  string walletAddress = 5;
-  string allowance = 6;
-  string transactionId = 7;
-  string name = 8;
+// Transaction is the full create-transaction payload (the Kafka event).
+message Transaction {
+  Device device = 1;
+  // Required transaction core (id, amount, datetime, channel, type).
+  TransactionData transaction = 2 [(buf.validate.field).required = true];
+  CreditCard credit_card = 3;
+  Boleto boleto = 4;
+  Order order = 5;
+  Pos pos = 6;
+  Customer customer = 7;
+  google.protobuf.Struct extra_data = 8;
 }
 
-message Transaction {
-  string transactionAmount = 1;
-  PredictiveAnalyzer predictiveAnalyzer = 2;
-  string final_decision = 3;
+message Device {
+  string fingerprint = 1;
+  string vendor = 2;
+  string browser = 3;
+  string category = 4;
+  string ip = 5;
+  string imei = 6;
+}
+
+message TransactionData {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  string description = 2;
+  string currency_code = 3;
+  // Money as a positive decimal string (source validated amount_total > 0).
+  string amount_total = 4 [(buf.validate.field).cel = {
+    id: "transaction.amount_total.gt_zero"
+    message: "amount_total must be a decimal string greater than 0"
+    expression: "this.matches('^[0-9]+([.][0-9]+)?$') && double(this) > 0"
+  }];
+  int32 instalments = 5;
+  google.protobuf.Timestamp datetime_request = 6 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp datetime_program = 7;
+  string acquirer = 8;
+  string channel = 9 [(buf.validate.field).string.min_len = 1];
+  string type = 10 [(buf.validate.field).string.min_len = 1];
+  string origin = 11;
+  repeated double location = 12;  // [latitude, longitude]
+  Party payer = 13;
+  Party receiver = 14;
+}
+
+message Party {
+  string id = 1;
+  protobuf.shared.RegistrationData registration_data = 2;
+  protobuf.shared.BankingData banking_data = 3;
+  repeated string pix_key = 4;
+  repeated protobuf.shared.PixKeyType pix_key_type = 5
+      [(buf.validate.field).repeated.items.enum.defined_only = true];
+}
+
+message CreditCard {
+  string id = 1;
+  string last_four = 2;
+  string holder_name = 3;
+  string scheme = 4;
+  string country = 5;
+  string bin = 6;
+  string expiration_date = 7;  // MM/YY or MM/YYYY in source; kept as string
+}
+
+message Boleto {
+  string our_number = 1;
+  string bar_code = 2;
+  string expiration_date = 3;
+  string issue_date = 4;
+  string beneficiary = 5;
+  string payer = 6;
+}
+
+message Order {
+  repeated OrderItem items = 1;
+  Delivery delivery = 2;
+  string voucher_value = 3;  // money (decimal string)
+  bool multiple_payment_methods = 4;
+}
+
+message OrderItem {
+  Item item = 1;
+  int32 quantity = 2;
+  string unit_price = 3;  // money (decimal string)
+}
+
+message Item {
+  string id = 1;
+  string category = 2;
+  string name = 3;
+}
+
+message Delivery {
+  string zip_code = 1;
+  string city = 2;
+  string street_name = 3;
+  string street_number = 4;
+  string complement = 5;
+  string state = 6;
+  string country = 7;
+  string value = 8;  // money (decimal string)
+  string company = 9;
+  int32 estimated_delivery_days = 10;
+  string phone_number = 11;
+}
+
+message Pos {
+  string id = 1;
+  string name = 2;
+  protobuf.shared.Address address = 3;
+}
+
+message Customer {
+  string name = 1;
+  string email = 2;
+  google.protobuf.Timestamp datetime_account_create = 3;
+  string phone_number = 4;
+  string birthdate = 5;
+  string doc_type = 6;
+  string doc = 7;
+  string id = 8;
+  protobuf.shared.Address address = 9;
 }
