@@ -20,4 +20,7 @@ Use **exatamente** estes termos no código, na spec e na conversa. Termo novo �
 - **BACKWARD** — regra de compatibilidade: o schema novo consegue ler dados do antigo. Campo só se **adiciona** (nunca remove/renumera).
 - **DLQ** — *dead-letter queue*: para onde o consumidor roteia uma mensagem rejeitada (erro tipado).
 - **frame** — os bytes do envelope (header + payload).
-- **Strategy A** — `buf generate` emite `gen/<lang>` (registro canônico) e `sdk/<lang>` (publicável) **idênticos** no código gerado.
+- **Strategy A** — `buf generate` emite `gen/<lang>` (registro canônico) e `sdk/<lang>` (publicável) no código gerado. (Caveat Go: como o `go_package` aponta pra `gen/go`, `sdk/go` **importa** `gen/go` — ver ADR-0007.)
+- **package versionado** — `protobuf.<domínio>.v1`; o diretório do `.proto` casa com o package e o último componente é a versão. Breaking → `v2` ao lado do `v1`. Ver ADR-0007.
+- **protovalidate** — regras de validação de campo declaradas no próprio `.proto` (`(buf.validate.field)`): required, ranges, enum, CEL. Viajam no descriptor; enforcement no consumidor. Ver ADR-0008.
+- **schema reference** — no SR, um schema que `import`a outro (`type`, `buf/validate`) referencia o subject do importado. O registrador auto-descobre as refs pelos `import` (resolve transitivo).
