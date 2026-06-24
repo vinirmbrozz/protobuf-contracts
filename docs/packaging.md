@@ -63,29 +63,31 @@ hand-edited.
 
 ```
 sdk/go/
-├── go.mod            # module github.com/vinirmbrozz/protobuf-contracts/sdk/go
+├── go.mod            # module .../sdk/go; require + replace .../gen/go
 ├── go.sum
-├── transaction.pb.go # generated (embedded from gen/go — see §4)
-├── serde.go          # Confluent SR serde (produce/consume)
-└── serde_test.go
+├── serde.go          # Confluent SR serde (bind/produce/consume) — generic
+├── serde_test.go
+└── protobuf/<domain>/v1/  # generated types (Strategy A; go_package → gen/go)
 ```
 
-**Module path:** `github.com/vinirmbrozz/protobuf-contracts/sdk/go`
+**Module path:** `github.com/vinirmbrozz/protobuf-contracts/sdk/go`. The versioned type packages'
+`go_package` points at `gen/go`, so `sdk/go` (and `interop/go`) `require`+`replace` the `gen/go` module.
 
 A consumer in another Go service does:
 
 ```go
-import contracts "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
+import (
+    serde "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
+    txpb  "github.com/vinirmbrozz/protobuf-contracts/sdk/go/protobuf/transaction/v1"
+)
 
-producer, _ := contracts.NewTransactionProducer(contracts.ProducerConfig{
-    Brokers:        []string{"kafka:9092"},
-    RegistryURL:    "http://schema-registry:8081",
-    Topic:          "transactions",
+s, _ := serde.New()                              // reads SCHEMA_REGISTRY_URL
+_ = s.Bind("transactions", &txpb.Transaction{})  // resolves schema_id (read-only)
+frame, _ := s.Produce("transactions", &txpb.Transaction{
+    Transaction: &txpb.TransactionData{Id: "tx-1", AmountTotal: "99.00", Channel: "web", Type: "PIX"},
 })
-producer.Produce(ctx, &contracts.Transaction{...})
+msg, _ := s.Consume("transactions", kafkaBytes)  // typed error → DLQ
 ```
-
-No secondary import from `gen/go` is needed; message types are re-exported from within `sdk/go`.
 
 ### 3.2 Node/TS — `sdk/node/`
 
@@ -100,51 +102,54 @@ sdk/node/
 │   ├── schema-registry-client.ts
 │   ├── types.ts      # typed produce/consume interfaces
 │   └── generated/    # generated TS types (embedded — see §4)
-│       └── transaction_pb.ts
+│       └── protobuf/<domain>/v1/*.ts
 └── dist/             # compiled output (gitignored, built on publish)
 ```
 
-**npm package name (proposed):** `@protobuf/contracts` — see §5 for escalation note.
+**npm package name:** `@protobuf/contracts`.
 
 A consumer does:
 
 ```typescript
-import { TransactionProducer } from "@protobuf/contracts";
+import { ProtobufSerde, Transaction } from "@protobuf/contracts";
 
-const producer = new TransactionProducer({
-  brokers: ["kafka:9092"],
-  registryUrl: "http://schema-registry:8081",
-  topic: "transactions",
-});
-await producer.produce({ cardId: "123", amount: 99.0, ... });
+const serde = new ProtobufSerde();               // reads SCHEMA_REGISTRY_URL
+await serde.bind("transactions", Transaction);
+const framed = serde.produce("transactions", Transaction.fromPartial({
+  transaction: { id: "tx-1", amountTotal: "99.00", channel: "web", type: "PIX" },
+}));
+const tx = await serde.consume("transactions", rawKafkaValue); // SerdeError → DLQ
 ```
 
 ### 3.3 Python — `sdk/python/`
 
 ```
 sdk/python/
-├── setup.py          # name "protobuf-contracts"  ← see §5
-├── MANIFEST.in
-├── README.md
-└── protobuf_contracts/
-    ├── __init__.py   # exports ProduceTransaction, ConsumeTransaction + pb types
-    ├── serde.py      # Confluent SR serde (produce/consume)
-    └── transaction_pb2.py  # generated (embedded — see §4)
+├── setup.py              # name "protobuf-contracts"; find_namespace_packages
+├── protobuf_contracts/   # hand-written: serde + re-exports
+│   ├── __init__.py       # re-exports the versioned generated types
+│   └── serde.py          # Confluent SR serde (bind/produce/consume)
+├── protobuf/             # generated types (top-level namespace pkg)
+│   ├── transaction/v1/transaction_pb2.py
+│   ├── onboarding/v1/onboarding_pb2.py
+│   └── type/v1/{address,registration,banking,pix}_pb2.py
+└── buf/validate/         # generated via --include-imports (protovalidate types; see §4)
 ```
 
-**PyPI package name (proposed):** `protobuf-contracts` — see §5 for escalation note.
+**PyPI package name:** `protobuf-contracts`.
 
-A consumer does:
+A consumer does (same `bind`/`produce`/`consume` shape as Go/Node):
 
 ```python
-from protobuf_contracts import TransactionProducer
+from protobuf_contracts import Transaction, TransactionData
+from protobuf_contracts.serde import KafkaSerde
 
-producer = TransactionProducer(
-    brokers=["kafka:9092"],
-    registry_url="http://schema-registry:8081",
-    topic="transactions",
-)
-producer.produce(card_id="123", amount=99.0)
+serde = KafkaSerde()                       # reads SCHEMA_REGISTRY_URL
+serde.bind("transactions", Transaction)
+framed = serde.produce("transactions", Transaction(
+    transaction=TransactionData(id="tx-1", amount_total="99.00", channel="web", type="PIX"),
+))
+tx = serde.consume("transactions", framed)
 ```
 
 ---
@@ -225,27 +230,21 @@ go get github.com/vinirmbrozz/protobuf-contracts/sdk/go
 
 ```go
 import (
-    contracts "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
-    "context"
+    serde "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
+    txpb  "github.com/vinirmbrozz/protobuf-contracts/sdk/go/protobuf/transaction/v1"
 )
 
-// Produce
-p, _ := contracts.NewTransactionProducer(contracts.ProducerConfig{
-    Brokers: []string{os.Getenv("KAFKA_BROKERS")},
-    RegistryURL: os.Getenv("SCHEMA_REGISTRY_URL"),
-    Topic: "transactions",
-})
-defer p.Close()
-p.Produce(context.Background(), &contracts.Transaction{...})
+s, _ := serde.New()                              // reads SCHEMA_REGISTRY_URL
+_ = s.Bind("transactions", &txpb.Transaction{})
 
-// Consume
-c, _ := contracts.NewTransactionConsumer(contracts.ConsumerConfig{
-    Brokers: []string{os.Getenv("KAFKA_BROKERS")},
-    RegistryURL: os.Getenv("SCHEMA_REGISTRY_URL"),
-    Topic: "transactions",
-    GroupID: "my-service",
+// Produce: frame the message, then hand the bytes to your Kafka producer.
+frame, _ := s.Produce("transactions", &txpb.Transaction{
+    Transaction: &txpb.TransactionData{Id: "tx-1", AmountTotal: "100.00", Channel: "web", Type: "PIX"},
 })
-msg, _ := c.Consume(context.Background())
+
+// Consume: pass the raw Kafka value; typed error → DLQ.
+msg, _ := s.Consume("transactions", kafkaValue)
+tx := msg.(*txpb.Transaction)
 ```
 
 ### Node/TS
@@ -255,52 +254,40 @@ npm install @protobuf/contracts
 ```
 
 ```typescript
-import { TransactionProducer, TransactionConsumer } from "@protobuf/contracts";
+import { ProtobufSerde, Transaction } from "@protobuf/contracts";
 
-// Produce
-const producer = new TransactionProducer({
-    brokers: [process.env.KAFKA_BROKERS!],
-    registryUrl: process.env.SCHEMA_REGISTRY_URL!,
-    topic: "transactions",
-});
-await producer.produce({ cardId: "abc", amount: 100 });
+const serde = new ProtobufSerde();               // reads SCHEMA_REGISTRY_URL
+await serde.bind("transactions", Transaction);
 
-// Consume
-const consumer = new TransactionConsumer({
-    brokers: [process.env.KAFKA_BROKERS!],
-    registryUrl: process.env.SCHEMA_REGISTRY_URL!,
-    topic: "transactions",
-    groupId: "my-service",
-});
-const msg = await consumer.consume();
+// Produce: frame, then hand the bytes to your Kafka producer.
+const framed = serde.produce("transactions", Transaction.fromPartial({
+    transaction: { id: "tx-1", amountTotal: "100.00", channel: "web", type: "PIX" },
+}));
+
+// Consume: pass the raw Kafka value; SerdeError → DLQ.
+const tx = await serde.consume("transactions", rawKafkaValue);
 ```
 
 ### Python
 
 ```bash
-pip install protobuf-contracts[kafka]
+pip install protobuf-contracts
 ```
 
 ```python
-from protobuf_contracts import TransactionProducer, TransactionConsumer
-import os
+from protobuf_contracts import Transaction, TransactionData
+from protobuf_contracts.serde import KafkaSerde
 
-# Produce
-producer = TransactionProducer(
-    brokers=[os.environ["KAFKA_BROKERS"]],
-    registry_url=os.environ["SCHEMA_REGISTRY_URL"],
-    topic="transactions",
-)
-producer.produce(card_id="abc", amount=100.0)
+serde = KafkaSerde()                       # reads SCHEMA_REGISTRY_URL
+serde.bind("transactions", Transaction)
 
-# Consume
-consumer = TransactionConsumer(
-    brokers=[os.environ["KAFKA_BROKERS"]],
-    registry_url=os.environ["SCHEMA_REGISTRY_URL"],
-    topic="transactions",
-    group_id="my-service",
-)
-msg = consumer.consume()
+# Produce: frame, then hand the bytes to your Kafka producer.
+framed = serde.produce("transactions", Transaction(
+    transaction=TransactionData(id="tx-1", amount_total="100.00", channel="web", type="PIX"),
+))
+
+# Consume: pass the raw Kafka value; SerdeError → DLQ.
+tx = serde.consume("transactions", raw_kafka_value)
 ```
 
 ---
