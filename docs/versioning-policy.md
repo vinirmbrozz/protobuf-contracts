@@ -17,19 +17,19 @@ proto/
 Current layout:
 ```
 proto/
-  transaction.proto   # truther.transaction package — Transaction + PredictiveAnalyzer
+  transaction.proto   # protobuf.transaction package — Transaction + PredictiveAnalyzer
 ```
 
 ### 1.1 Package naming
 
 ```protobuf
 syntax = "proto3";
-package truther.<domain>;
-option go_package = "github.com/vinirmbrozz/truther-contracts/gen/go/<domain>";
+package protobuf.<domain>;
+option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/<domain>";
 ```
 
 As new domains are added, create `proto/<domain>/<entity>.proto` with package
-`truther.<domain>`.
+`protobuf.<domain>`.
 
 ### 1.2 Field naming
 
@@ -88,11 +88,11 @@ Breaking change definition (buf `FILE` mode):
 
 ### 3.1 Versions
 
-`v1` is the **current and only version** of the truther-contracts schema. The version lives in the
+`v1` is the **current and only version** of the protobuf-contracts schema. The version lives in the
 Schema Registry subject, not in the proto package name.
 
 Proto packages do **not** include a version suffix until a breaking change is required. At that
-point, create `proto/transaction/v2/transaction.proto` with package `truther.transaction.v2`.
+point, create `proto/transaction/v2/transaction.proto` with package `protobuf.transaction.v2`.
 
 ### 3.2 Version bump process
 
@@ -126,7 +126,7 @@ We use `DEFAULT` rule set with two exceptions (see `buf.yaml`):
 ### 4.2 Breaking checks
 
 `buf breaking` is run with `--against .git#branch=main` in CI and against the BSR baseline
-(once we publish to `buf.build/truther/contracts`).
+(once we publish to `buf.build/protobuf/contracts`).
 
 ### 4.3 protovalidate
 

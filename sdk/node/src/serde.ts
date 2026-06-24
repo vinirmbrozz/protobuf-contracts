@@ -1,5 +1,5 @@
 /**
- * TrutherSerde — thin Confluent SR serde for Kafka (Decision A).
+ * ProtobufSerde — thin Confluent SR serde for Kafka (Decision A).
  *
  * The SDK never reads a .proto and never registers schemas. bind() resolves the
  * topic's schema_id from the Schema Registry (read-only); produce() stamps the
@@ -7,10 +7,10 @@
  * the bound type.
  *
  * Usage:
- *   import { TrutherSerde } from '@truther/contracts';
- *   import { Transaction } from '@truther/contracts';
+ *   import { ProtobufSerde } from '@protobuf/contracts';
+ *   import { Transaction } from '@protobuf/contracts';
  *
- *   const serde = new TrutherSerde();             // reads SCHEMA_REGISTRY_URL
+ *   const serde = new ProtobufSerde();             // reads SCHEMA_REGISTRY_URL
  *   await serde.bind('transactions', Transaction); // resolves schema_id at startup
  *   const framed = serde.produce('transactions', Transaction.create({ ... }));
  *   const tx = await serde.consume('transactions', rawValue); // -> Transaction
@@ -51,7 +51,7 @@ interface Binding<T> {
   indexes: number[];
 }
 
-export class TrutherSerde {
+export class ProtobufSerde {
   private readonly sr: SchemaRegistryClient;
   private readonly bindings = new Map<string, Binding<unknown>>();
 

@@ -55,4 +55,4 @@ plugins:
     out: gen/python
   # SDK embedding (Strategy A — ROD-22)
   - name: python
-    out: sdk/python/truther_contracts
+    out: sdk/python/protobuf_contracts

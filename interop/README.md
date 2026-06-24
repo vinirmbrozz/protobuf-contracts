@@ -15,9 +15,9 @@ See [`docs/confluent-sr-serde-spec.md`](../docs/confluent-sr-serde-spec.md) for 
 ```
 interop/
   orchestrate.mjs   ← runs the 3×3 produce→consume matrix
-  cli.js            ← Node CLI (ESM)        — imports @truther/contracts (sdk/node)
+  cli.js            ← Node CLI (ESM)        — imports @protobuf/contracts (sdk/node)
   go/main.go        ← Go CLI                — imports sdk/go (serde + proto)
-  python/cli.py     ← Python CLI            — imports truther_contracts (sdk/python)
+  python/cli.py     ← Python CLI            — imports protobuf_contracts (sdk/python)
 ```
 
 Each CLI exposes the same contract:

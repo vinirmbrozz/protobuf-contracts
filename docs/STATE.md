@@ -70,9 +70,15 @@ frágil. Discussão de design levou à **Decisão A** (registro fora da lib; SDK
   remetente — camadas futuras: broker-side validation, ACL/TLS).
 
 ## 6. Pendências
-- **Renomear a marca "Truther"** — o projeto é **pessoal** do fundador; renomear repo, pacotes
-  (`@truther/contracts`, `truther-contracts`), módulo Go, package proto `truther.transaction`, refs em
-  docs. Fazer num passo coordenado (toca código gerado + module path).
+- 🔴 **URGENTE — protos reais a partir do `data-rudder-provider`.** O `proto/transaction.proto` atual
+  é **mock descartável** (seed). Criar dois contratos reais: `transaction.proto` e `onboarding.proto`,
+  **equivalentes às rotas homônimas** do projeto `C:\Users\mbroz\OneDrive\Documentos\Truther\data-rudder-provider`.
+  Depois: regerar SDKs (CI), atualizar `scripts/schemas.json` (topic→proto) e o registrador.
+- **Renomear a marca "Truther" → "Protobuf"** — ✅ **feito** (este passo). Repo agora `protobuf-contracts`;
+  pacotes `@protobuf/contracts` / `protobuf-contracts` / `protobuf_contracts`; package proto `protobuf.transaction`;
+  módulo Go `github.com/vinirmbrozz/protobuf-contracts`. Código **gerado** (`gen/**`, `sdk/**/generated`,
+  `*_pb2.py`/`*.pb.go`/`*_pb.js`, descriptor binário) **regenera no CI** (`generate.yml`) — não editado à mão.
+  Falta (humano): renomear o repo no GitHub e a pasta local.
 - **Público vs privado dos registries** (npm/PyPI/Go) — decidir antes de publicar.
 - **Broker-side schema validation** (Confluent Platform/proxy) se um dia quiser barrar na escrita.
 

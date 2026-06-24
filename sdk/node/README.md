@@ -1,4 +1,4 @@
-# @truther/contracts
+# @protobuf/contracts
 
 Generated Protobuf types + Confluent Schema Registry serde for Node/TypeScript.
 
@@ -25,17 +25,17 @@ for any message, no per-contract code.
 ## Install
 
 ```bash
-npm install @truther/contracts          # published
+npm install @protobuf/contracts          # published
 # or, from a checkout of this repo:
-npm install file:../truther-contracts/sdk/node
+npm install file:../protobuf-contracts/sdk/node
 ```
 
 ## Quick start
 
 ```ts
-import { TrutherSerde, Transaction } from '@truther/contracts';
+import { ProtobufSerde, Transaction } from '@protobuf/contracts';
 
-const serde = new TrutherSerde();                  // reads SCHEMA_REGISTRY_URL
+const serde = new ProtobufSerde();                  // reads SCHEMA_REGISTRY_URL
 await serde.bind('transactions', Transaction);     // resolves the schema_id from SR
 
 // Produce
@@ -54,7 +54,7 @@ const tx = await serde.consume('transactions', rawKafkaValue);
 
 ## API
 
-### `new TrutherSerde(options?)`
+### `new ProtobufSerde(options?)`
 `{ srUrl?, srApiKey?, srApiSecret? }` — each falls back to the matching env var.
 
 ### `serde.bind(topic, Codec): Promise<void>`

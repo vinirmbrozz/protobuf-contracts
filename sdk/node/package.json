@@ -1,7 +1,7 @@
 {
-  "name": "@truther/contracts",
+  "name": "@protobuf/contracts",
   "version": "1.0.0",
-  "description": "Truther Contracts SDK — generated Protobuf types + Confluent SR serde for Node/TS",
+  "description": "Protobuf Contracts SDK — generated Protobuf types + Confluent SR serde for Node/TS",
   "type": "commonjs",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,7 +24,7 @@
     "lint": "tsc --noEmit"
   },
   "keywords": [
-    "truther",
+    "protobuf",
     "kafka",
     "serde",
     "confluent",

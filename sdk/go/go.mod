@@ -1,4 +1,4 @@
-module github.com/vinirmbrozz/truther-contracts/sdk/go
+module github.com/vinirmbrozz/protobuf-contracts/sdk/go
 
 go 1.21
 

@@ -18,8 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	serde "github.com/vinirmbrozz/truther-contracts/sdk/go"
-	txpb "github.com/vinirmbrozz/truther-contracts/sdk/go/proto"
+	serde "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
+	txpb "github.com/vinirmbrozz/protobuf-contracts/sdk/go/proto"
 	"google.golang.org/protobuf/proto"
 )
 

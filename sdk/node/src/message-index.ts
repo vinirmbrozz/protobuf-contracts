@@ -18,7 +18,7 @@ function buildIndex(): Map<string, number[]> {
   const map = new Map<string, number[]>();
   for (const file of fds.file) {
     const pkg = file.package ?? '';
-    // Top-level messages only (Truther messages are top-level). The index path
+    // Top-level messages only (Protobuf messages are top-level). The index path
     // is the declaration order within the file's message_type list.
     file.messageType.forEach((msg, i) => {
       const fullName = pkg ? `${pkg}.${msg.name}` : (msg.name ?? '');
@@ -28,7 +28,7 @@ function buildIndex(): Map<string, number[]> {
   return map;
 }
 
-/** Returns the message-index path for a message's full name (e.g. "truther.transaction.Transaction"). */
+/** Returns the message-index path for a message's full name (e.g. "protobuf.transaction.Transaction"). */
 export function messageIndexFor(fullName: string): number[] {
   if (!cache) cache = buildIndex();
   const idx = cache.get(fullName);

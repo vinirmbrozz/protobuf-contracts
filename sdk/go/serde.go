@@ -215,7 +215,7 @@ func parseFrame(data []byte) (schemaID uint32, indexes []int, payload []byte, er
 }
 
 // messageIndexes returns the message-index path of m within its FileDescriptor.
-// Truther messages are top-level, so this is a single-element path [index].
+// Protobuf messages are top-level, so this is a single-element path [index].
 func messageIndexes(m proto.Message) []int {
 	return []int{int(m.ProtoReflect().Descriptor().Index())}
 }

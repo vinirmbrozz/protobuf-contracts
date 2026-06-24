@@ -1,5 +1,5 @@
 /**
- * Node interop CLI — uses the @truther/contracts SDK (ESM, no local framing).
+ * Node interop CLI — uses the @protobuf/contracts SDK (ESM, no local framing).
  *
  *   node interop/cli.js produce <topic> <file>   # SDK bind + produce → file
  *   node interop/cli.js consume <topic> <file>    # SDK bind + consume + verify
@@ -9,7 +9,7 @@
  * Reads SCHEMA_REGISTRY_URL from the environment.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { TrutherSerde, Transaction } from '@truther/contracts';
+import { ProtobufSerde, Transaction } from '@protobuf/contracts';
 
 const SAMPLE = {
   transactionAmount: '499.99',
@@ -46,7 +46,7 @@ if (!cmd || !topic || !file) {
   process.exit(2);
 }
 
-const serde = new TrutherSerde();
+const serde = new ProtobufSerde();
 await serde.bind(topic, Transaction);
 
 if (cmd === 'produce') {

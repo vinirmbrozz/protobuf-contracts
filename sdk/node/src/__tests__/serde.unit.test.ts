@@ -1,7 +1,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { TrutherSerde, SerdeError } from '../serde';
+import { ProtobufSerde, SerdeError } from '../serde';
 import { encodeMessageIndexes, frameMessage } from '../framing';
 import { Transaction, PredictiveAnalyzer } from '../generated/proto/transaction';
 
@@ -50,10 +50,10 @@ function sampleTx(): Transaction {
   });
 }
 
-describe('TrutherSerde (thin, mock SR)', () => {
+describe('ProtobufSerde (thin, mock SR)', () => {
   test('round-trip Transaction (index 1 → variable msg-index)', async () => {
     const sr = await mockSR({ 'transactions-value': 42 });
-    const serde = new TrutherSerde({ srUrl: sr.url });
+    const serde = new ProtobufSerde({ srUrl: sr.url });
     await serde.bind('transactions', Transaction);
 
     const original = sampleTx();
@@ -69,7 +69,7 @@ describe('TrutherSerde (thin, mock SR)', () => {
 
   test('round-trip PredictiveAnalyzer (index 0 → 0x00)', async () => {
     const sr = await mockSR({ 'predictions-value': 7 });
-    const serde = new TrutherSerde({ srUrl: sr.url });
+    const serde = new ProtobufSerde({ srUrl: sr.url });
     await serde.bind('predictions', PredictiveAnalyzer);
 
     const framed = serde.produce('predictions', PredictiveAnalyzer.create({ isAllowed: true }));
@@ -80,14 +80,14 @@ describe('TrutherSerde (thin, mock SR)', () => {
 
   test('bind fails when the subject is not registered', async () => {
     const sr = await mockSR({});
-    const serde = new TrutherSerde({ srUrl: sr.url });
+    const serde = new ProtobufSerde({ srUrl: sr.url });
     await expect(serde.bind('transactions', Transaction)).rejects.toThrow();
     await sr.close();
   });
 
   test('produce/consume on an unbound topic → TOPIC_NOT_BOUND', async () => {
     const sr = await mockSR({ 'transactions-value': 42 });
-    const serde = new TrutherSerde({ srUrl: sr.url });
+    const serde = new ProtobufSerde({ srUrl: sr.url });
     expect(() => serde.produce('transactions', sampleTx())).toThrow(
       expect.objectContaining({ code: 'TOPIC_NOT_BOUND' }),
     );
@@ -100,7 +100,7 @@ describe('TrutherSerde (thin, mock SR)', () => {
   describe('consumer security rejections', () => {
     test('wrong magic byte → INVALID_MAGIC_BYTE', async () => {
       const sr = await mockSR({ 'transactions-value': 42 });
-      const serde = new TrutherSerde({ srUrl: sr.url });
+      const serde = new ProtobufSerde({ srUrl: sr.url });
       await serde.bind('transactions', Transaction);
       await expect(serde.consume('transactions', Buffer.from([0x01, 0, 0, 0, 42, 0x02, 0x02, 0x0a]))).rejects.toMatchObject(
         { code: 'INVALID_MAGIC_BYTE' },
@@ -110,7 +110,7 @@ describe('TrutherSerde (thin, mock SR)', () => {
 
     test('short frame → FRAME_TOO_SHORT', async () => {
       const sr = await mockSR({ 'transactions-value': 42 });
-      const serde = new TrutherSerde({ srUrl: sr.url });
+      const serde = new ProtobufSerde({ srUrl: sr.url });
       await serde.bind('transactions', Transaction);
       await expect(serde.consume('transactions', Buffer.from([0x00, 0, 0]))).rejects.toMatchObject({
         code: 'FRAME_TOO_SHORT',
@@ -120,7 +120,7 @@ describe('TrutherSerde (thin, mock SR)', () => {
 
     test('schema_id from another subject → SCHEMA_FOREIGN', async () => {
       const sr = await mockSR({ 'transactions-value': 42, 'other-value': 99 });
-      const serde = new TrutherSerde({ srUrl: sr.url });
+      const serde = new ProtobufSerde({ srUrl: sr.url });
       await serde.bind('transactions', Transaction);
       const bad = frameMessage(99, encodeMessageIndexes([1]), Transaction.encode(sampleTx()).finish());
       await expect(serde.consume('transactions', bad)).rejects.toMatchObject({ code: 'SCHEMA_FOREIGN' });
@@ -129,7 +129,7 @@ describe('TrutherSerde (thin, mock SR)', () => {
 
     test('message-index mismatch → MESSAGE_INDEX_MISMATCH', async () => {
       const sr = await mockSR({ 'transactions-value': 42 });
-      const serde = new TrutherSerde({ srUrl: sr.url });
+      const serde = new ProtobufSerde({ srUrl: sr.url });
       await serde.bind('transactions', Transaction); // expects index 1
       const bad = frameMessage(42, encodeMessageIndexes([0]), Transaction.encode(sampleTx()).finish());
       await expect(serde.consume('transactions', bad)).rejects.toMatchObject({ code: 'MESSAGE_INDEX_MISMATCH' });
@@ -138,7 +138,7 @@ describe('TrutherSerde (thin, mock SR)', () => {
 
     test('invalid payload → DESERIALIZATION_ERROR', async () => {
       const sr = await mockSR({ 'transactions-value': 42 });
-      const serde = new TrutherSerde({ srUrl: sr.url });
+      const serde = new ProtobufSerde({ srUrl: sr.url });
       await serde.bind('transactions', Transaction);
       const bad = frameMessage(42, encodeMessageIndexes([1]), Buffer.from([0xff, 0xff, 0xff]));
       await expect(serde.consume('transactions', bad)).rejects.toMatchObject({ code: 'DESERIALIZATION_ERROR' });

@@ -6,16 +6,16 @@
  *   SCHEMA_REGISTRY_URL=http://localhost:8081 python scripts/register_schemas.py
  *   SCHEMA_REGISTRY_URL=http://localhost:8081 npm run test:integration
  */
-import { TrutherSerde } from '../serde';
+import { ProtobufSerde } from '../serde';
 import { encodeMessageIndexes, frameMessage } from '../framing';
 import { Transaction, PredictiveAnalyzer } from '../generated/proto/transaction';
 
 const SR_URL = process.env['SCHEMA_REGISTRY_URL'];
 const maybe = SR_URL ? describe : describe.skip;
 
-maybe('TrutherSerde against real SR', () => {
+maybe('ProtobufSerde against real SR', () => {
   test('round-trip a Transaction via the real registry', async () => {
-    const serde = new TrutherSerde({ srUrl: SR_URL });
+    const serde = new ProtobufSerde({ srUrl: SR_URL });
     await serde.bind('transactions', Transaction);
 
     const original = Transaction.create({
@@ -29,7 +29,7 @@ maybe('TrutherSerde against real SR', () => {
   });
 
   test('a bogus schema_id is rejected by the real registry', async () => {
-    const serde = new TrutherSerde({ srUrl: SR_URL });
+    const serde = new ProtobufSerde({ srUrl: SR_URL });
     await serde.bind('transactions', Transaction);
     const bad = frameMessage(987654, encodeMessageIndexes([1]), Transaction.encode(Transaction.create({})).finish());
     await expect(serde.consume('transactions', bad)).rejects.toMatchObject({ code: 'SCHEMA_FOREIGN' });

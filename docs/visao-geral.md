@@ -1,4 +1,4 @@
-# Visão geral — como o truther-contracts funciona
+# Visão geral — como o protobuf-contracts funciona
 
 > Arquivo para leitura e aprendizado de quem não tem familiaridade com o projeto.
 > Pode ser lido por IA para referência, mas o foco é ensinar alguém a caminhar sozinho pelo projeto.
@@ -24,7 +24,7 @@ Toda mensagem no Kafka vai dentro do **envelope Confluent**:
 ```
 - **Magic byte** sempre `0x00` — consumidor rejeita qualquer outro 1º byte.
 - **Schema ID** — número que o Schema Registry deu ao schema; diz "sigo o contrato nº N".
-- **Message index** — qual mensagem no `.proto`; convenção Truther = 1 msg por subject → sempre `0x00`.
+- **Message index** — qual mensagem no `.proto`; convenção Protobuf = 1 msg por subject → sempre `0x00`.
 - **Payload** — proto3 binário (sem prefixo de tamanho).
 
 Cabeçalho fixo de 6 bytes + payload. **Isto é o portão**: produtor embrulha com o id; consumidor

@@ -1,5 +1,5 @@
 """
-Unit tests for truther_contracts.serde (thin) against a mock Schema Registry.
+Unit tests for protobuf_contracts.serde (thin) against a mock Schema Registry.
 
 The mock is read-only (no register): it serves
   GET /subjects/{subject}/versions/latest  -> {"id": N}
@@ -12,8 +12,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from truther_contracts import Transaction, PredictiveAnalyzer
-from truther_contracts.serde import (
+from protobuf_contracts import Transaction, PredictiveAnalyzer
+from protobuf_contracts.serde import (
     KafkaSerde,
     InvalidMagicByteError,
     FrameTooShortError,

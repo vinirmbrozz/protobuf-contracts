@@ -9,7 +9,7 @@
 
 ## 1. Purpose
 
-This document is the **single source of truth** for how Truther services serialize and deserialize
+This document is the **single source of truth** for how Protobuf services serialize and deserialize
 Protobuf messages over Kafka using Confluent Schema Registry. Every producer and consumer across
 Go, Node and Python **must** implement exactly this contract. Deviations require a versioned update
 to this spec and CTO sign-off.
@@ -18,7 +18,7 @@ to this spec and CTO sign-off.
 
 ## 2. Wire Format
 
-Every Kafka message value produced or consumed by a Truther service uses the **Confluent envelope**:
+Every Kafka message value produced or consumed by a Protobuf service uses the **Confluent envelope**:
 
 ```
 ┌─────────────┬─────────────────────────────┬──────────────────────┬─────────────────────────────┐
@@ -97,7 +97,7 @@ func ParseFrame(data []byte) (schemaID int32, err error) {
 | Strategy | Subject name pattern | Example |
 |---|---|---|
 | **TopicNameStrategy** | `<topic-name>-value` | `transactions-value` |
-| **RecordNameStrategy** | `<package>.<MessageName>` | `truther.transaction.Transaction` |
+| **RecordNameStrategy** | `<package>.<MessageName>` | `protobuf.transaction.Transaction` |
 
 ### 3.2 Confirmed: TopicNameStrategy
 
@@ -195,7 +195,7 @@ These changes REQUIRE a new version/migration (see §6):
 
 Validation is enforced **at the consumer** using [protovalidate](https://github.com/bufbuild/protovalidate).
 
-Standard rules for Truther messages:
+Standard rules for Protobuf messages:
 - All ID fields (`*_id`, `*Id`) — `string.min_len: 1` (non-empty UUID-like)
 - Amount fields (`transaction_amount`) — `string.pattern: "^[0-9]+(\\.[0-9]{1,8})?$"`
 - Boolean decision fields — no special rule, default false is valid

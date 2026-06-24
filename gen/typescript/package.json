@@ -1,14 +1,14 @@
 {
-  "name": "@truther/contracts-sdk",
+  "name": "@protobuf/contracts-sdk",
   "version": "1.0.0",
-  "description": "TypeScript SDK for Truther Contracts",
+  "description": "TypeScript SDK for Protobuf Contracts",
   "main": "transaction.ts",
   "types": "transaction.ts",
-  "keywords": ["truther", "contracts", "protobuf"],
+  "keywords": ["protobuf", "contracts", "protobuf"],
   "author": "vinirmbrozz",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vinirmbrozz/truther-contracts.git"
+    "url": "https://github.com/vinirmbrozz/protobuf-contracts.git"
   }
 }

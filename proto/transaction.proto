@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package truther.transaction;
+package protobuf.transaction;
 
-option go_package = "github.com/vinirmbrozz/truther-contracts/gen/go/transaction";
+option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/transaction";
 
 message PredictiveAnalyzer {
   bool isAllowed = 1;

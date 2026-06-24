@@ -1,4 +1,4 @@
-# Canonical Layout & Packaging Standard — truther-contracts
+# Canonical Layout & Packaging Standard — protobuf-contracts
 
 **Version:** 1.0  
 **Status:** Authoritative  
@@ -9,7 +9,7 @@
 
 ## 1. Goal
 
-Every Truther service must install **one dependency per language** and immediately have:
+Every Protobuf service must install **one dependency per language** and immediately have:
 
 - all generated Protobuf message types, and  
 - the typed `produce` / `consume` API wired to Confluent Schema Registry.
@@ -21,7 +21,7 @@ This document defines where that one package lives in the repository, how it is 
 ## 2. Repository Layout
 
 ```
-truther-contracts/
+protobuf-contracts/
 ├── proto/                        # source of truth — never hand-edited except here
 │   └── transaction.proto
 ├── gen/                          # buf codegen output — never hand-edited
@@ -63,19 +63,19 @@ hand-edited.
 
 ```
 sdk/go/
-├── go.mod            # module github.com/vinirmbrozz/truther-contracts/sdk/go
+├── go.mod            # module github.com/vinirmbrozz/protobuf-contracts/sdk/go
 ├── go.sum
 ├── transaction.pb.go # generated (embedded from gen/go — see §4)
 ├── serde.go          # Confluent SR serde (produce/consume)
 └── serde_test.go
 ```
 
-**Module path:** `github.com/vinirmbrozz/truther-contracts/sdk/go`
+**Module path:** `github.com/vinirmbrozz/protobuf-contracts/sdk/go`
 
 A consumer in another Go service does:
 
 ```go
-import contracts "github.com/vinirmbrozz/truther-contracts/sdk/go"
+import contracts "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
 
 producer, _ := contracts.NewTransactionProducer(contracts.ProducerConfig{
     Brokers:        []string{"kafka:9092"},
@@ -91,7 +91,7 @@ No secondary import from `gen/go` is needed; message types are re-exported from 
 
 ```
 sdk/node/
-├── package.json      # "name": "@truther/contracts"  ← see §5
+├── package.json      # "name": "@protobuf/contracts"  ← see §5
 ├── tsconfig.json
 ├── src/
 │   ├── index.ts      # public API — re-exports types + serde
@@ -104,12 +104,12 @@ sdk/node/
 └── dist/             # compiled output (gitignored, built on publish)
 ```
 
-**npm package name (proposed):** `@truther/contracts` — see §5 for escalation note.
+**npm package name (proposed):** `@protobuf/contracts` — see §5 for escalation note.
 
 A consumer does:
 
 ```typescript
-import { TransactionProducer } from "@truther/contracts";
+import { TransactionProducer } from "@protobuf/contracts";
 
 const producer = new TransactionProducer({
   brokers: ["kafka:9092"],
@@ -123,21 +123,21 @@ await producer.produce({ cardId: "123", amount: 99.0, ... });
 
 ```
 sdk/python/
-├── setup.py          # name "truther-contracts"  ← see §5
+├── setup.py          # name "protobuf-contracts"  ← see §5
 ├── MANIFEST.in
 ├── README.md
-└── truther_contracts/
+└── protobuf_contracts/
     ├── __init__.py   # exports ProduceTransaction, ConsumeTransaction + pb types
     ├── serde.py      # Confluent SR serde (produce/consume)
     └── transaction_pb2.py  # generated (embedded — see §4)
 ```
 
-**PyPI package name (proposed):** `truther-contracts` — see §5 for escalation note.
+**PyPI package name (proposed):** `protobuf-contracts` — see §5 for escalation note.
 
 A consumer does:
 
 ```python
-from truther_contracts import TransactionProducer
+from protobuf_contracts import TransactionProducer
 
 producer = TransactionProducer(
     brokers=["kafka:9092"],
@@ -179,7 +179,7 @@ plugins:
   - name: python
     out: gen/python      # canonical gen record
   - name: python
-    out: sdk/python/truther_contracts  # SDK embedding
+    out: sdk/python/protobuf_contracts  # SDK embedding
 ```
 
 ### Strategy B — copy step in CI
@@ -198,34 +198,34 @@ Strategy A was selected (D-3, confirmed by CTO) and applied in ROD-22.
 
 | Language | Package name | Registry | Status |
 |----------|-------------|----------|--------|
-| Go | `github.com/vinirmbrozz/truther-contracts/sdk/go` | GitHub (public) | **Confirmed** |
-| Node/TS | `@truther/contracts` | npm (public) | **Confirmed** (D-1, ROD-22) |
-| Python | `truther-contracts` | PyPI | **Confirmed** (D-2, ROD-22) |
+| Go | `github.com/vinirmbrozz/protobuf-contracts/sdk/go` | GitHub (public) | **Confirmed** |
+| Node/TS | `@protobuf/contracts` | npm (public) | **Confirmed** (D-1, ROD-22) |
+| Python | `protobuf-contracts` | PyPI | **Confirmed** (D-2, ROD-22) |
 
-The npm org `truther` must exist before publish; the founder handles npm/PyPI account setup.
-The Node SDK branch ([ROD-16](/ROD/issues/ROD-16)) must rename the package from `@truther/kafka-serde`
-to `@truther/contracts` as part of the conformance step — this is a breaking change for consumers
+The npm org `protobuf` must exist before publish; the founder handles npm/PyPI account setup.
+The Node SDK branch ([ROD-16](/ROD/issues/ROD-16)) must rename the package from `@protobuf/kafka-serde`
+to `@protobuf/contracts` as part of the conformance step — this is a breaking change for consumers
 on the old name.
 
-Similarly, [ROD-17](/ROD/issues/ROD-17) uses `truther-contracts-sdk`; conformance must rename it to
-`truther-contracts`. The founder must verify no external registrations exist for the old names before
+Similarly, [ROD-17](/ROD/issues/ROD-17) uses `protobuf-contracts-sdk`; conformance must rename it to
+`protobuf-contracts`. The founder must verify no external registrations exist for the old names before
 publishing under the new ones. **Agents do not publish**.
 
 ---
 
 ## 6. Consumer Quick-start
 
-After the packages are published, a new Truther service integrates as follows.
+After the packages are published, a new Protobuf service integrates as follows.
 
 ### Go
 
 ```bash
-go get github.com/vinirmbrozz/truther-contracts/sdk/go
+go get github.com/vinirmbrozz/protobuf-contracts/sdk/go
 ```
 
 ```go
 import (
-    contracts "github.com/vinirmbrozz/truther-contracts/sdk/go"
+    contracts "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
     "context"
 )
 
@@ -251,11 +251,11 @@ msg, _ := c.Consume(context.Background())
 ### Node/TS
 
 ```bash
-npm install @truther/contracts
+npm install @protobuf/contracts
 ```
 
 ```typescript
-import { TransactionProducer, TransactionConsumer } from "@truther/contracts";
+import { TransactionProducer, TransactionConsumer } from "@protobuf/contracts";
 
 // Produce
 const producer = new TransactionProducer({
@@ -278,11 +278,11 @@ const msg = await consumer.consume();
 ### Python
 
 ```bash
-pip install truther-contracts[kafka]
+pip install protobuf-contracts[kafka]
 ```
 
 ```python
-from truther_contracts import TransactionProducer, TransactionConsumer
+from protobuf_contracts import TransactionProducer, TransactionConsumer
 import os
 
 # Produce
@@ -312,14 +312,14 @@ No serde logic changes; only file location and package metadata change.
 
 ### 7.1 ROD-15 — Go serde
 
-**Current location:** `serde/` (module `github.com/vinirmbrozz/truther-contracts/serde`)  
-**Target location:** `sdk/go/` (module `github.com/vinirmbrozz/truther-contracts/sdk/go`)
+**Current location:** `serde/` (module `github.com/vinirmbrozz/protobuf-contracts/serde`)  
+**Target location:** `sdk/go/` (module `github.com/vinirmbrozz/protobuf-contracts/sdk/go`)
 
 Steps:
 1. Move `serde/serde.go` → `sdk/go/serde.go`.
 2. Move `serde/serde_test.go` → `sdk/go/serde_test.go`.
 3. Update `sdk/go/go.mod`:
-   - Change module path to `github.com/vinirmbrozz/truther-contracts/sdk/go`.
+   - Change module path to `github.com/vinirmbrozz/protobuf-contracts/sdk/go`.
    - Keep existing `require` entries.
 4. Embed generated types: copy `gen/go/transaction.pb.go` into `sdk/go/` OR update `go.mod` to
    `replace` the gen module with a local path (temporary, until codegen target change is approved).
@@ -327,20 +327,20 @@ Steps:
 6. Verify `go test ./sdk/go/...` passes.
 7. Delete the now-empty `serde/` directory.
 
-> Note: the `gen/go/` module (`github.com/vinirmbrozz/truther-contracts/gen/go`) stays in place as
+> Note: the `gen/go/` module (`github.com/vinirmbrozz/protobuf-contracts/gen/go`) stays in place as
 > the canonical generated-types module. `sdk/go/` may import it as a dependency or embed the
 > generated files directly (see §4).
 
 ### 7.2 ROD-16 — Node/TS serde
 
-**Current location:** `packages/kafka-serde/` (`@truther/kafka-serde`)  
-**Target location:** `sdk/node/` (`@truther/contracts` — pending CTO name confirmation, see §5)
+**Current location:** `packages/kafka-serde/` (`@protobuf/kafka-serde`)  
+**Target location:** `sdk/node/` (`@protobuf/contracts` — pending CTO name confirmation, see §5)
 
 Steps:
 1. Move `packages/kafka-serde/src/` → `sdk/node/src/`.
 2. Move `packages/kafka-serde/tsconfig.json` → `sdk/node/tsconfig.json`.
 3. Rename the `package.json`:
-   - Change `"name"` from `"@truther/kafka-serde"` to the CTO-confirmed name (propose `"@truther/contracts"`).
+   - Change `"name"` from `"@protobuf/kafka-serde"` to the CTO-confirmed name (propose `"@protobuf/contracts"`).
    - Update `"description"` to reflect it is the full contracts SDK.
    - Keep all existing `dependencies` / `devDependencies`.
 4. Embed generated types: copy `gen/typescript/transaction_pb.ts` into `sdk/node/src/generated/`
@@ -351,21 +351,21 @@ Steps:
 
 ### 7.3 ROD-17 — Python serde
 
-**Current location:** `gen/python/truther_contracts_sdk/` (package `truther-contracts-sdk`)  
-**Target location:** `sdk/python/` (package `truther-contracts` — pending CTO name confirmation, see §5)
+**Current location:** `gen/python/protobuf_contracts_sdk/` (package `protobuf-contracts-sdk`)  
+**Target location:** `sdk/python/` (package `protobuf-contracts` — pending CTO name confirmation, see §5)
 
 Steps:
-1. Move `gen/python/truther_contracts_sdk/` → `sdk/python/truther_contracts/`.
-2. Rename the Python package directory from `truther_contracts_sdk` to `truther_contracts`
+1. Move `gen/python/protobuf_contracts_sdk/` → `sdk/python/protobuf_contracts/`.
+2. Rename the Python package directory from `protobuf_contracts_sdk` to `protobuf_contracts`
    (drops the `_sdk` suffix to match the pip install name).
 3. Move `gen/python/setup.py` → `sdk/python/setup.py`; update:
-   - `name` → `"truther-contracts"` (or CTO-confirmed name).
-   - `packages` → `find_packages(exclude=["tests*"])` pointing at `truther_contracts/`.
+   - `name` → `"protobuf-contracts"` (or CTO-confirmed name).
+   - `packages` → `find_packages(exclude=["tests*"])` pointing at `protobuf_contracts/`.
 4. Move or symlink `gen/python/tests/` → `sdk/python/tests/`.
-5. Embed generated types: copy `gen/python/transaction_pb2.py` into `sdk/python/truther_contracts/`
+5. Embed generated types: copy `gen/python/transaction_pb2.py` into `sdk/python/protobuf_contracts/`
    OR keep `gen/python/` as a declared dependency (`setup.py` `install_requires` → path dependency
    until proper packaging is finalised).
-6. Update `__init__.py` imports from `truther_contracts_sdk.*` → `truther_contracts.*`.
+6. Update `__init__.py` imports from `protobuf_contracts_sdk.*` → `protobuf_contracts.*`.
 7. Run `pytest sdk/python/tests/` — all tests must pass.
 8. `gen/python/` retains the raw buf output; `sdk/python/` is the publishable SDK.
 
@@ -391,8 +391,8 @@ These rules apply to all three languages after conformance:
 
 | # | Decision | Resolved value | Status |
 |---|----------|---------------|--------|
-| D-1 | npm package name | `@truther/contracts` | **RESOLVED** |
-| D-2 | PyPI package name | `truther-contracts` | **RESOLVED** |
+| D-1 | npm package name | `@protobuf/contracts` | **RESOLVED** |
+| D-2 | PyPI package name | `protobuf-contracts` | **RESOLVED** |
 | D-3 | Gen embedding strategy | Strategy A — dual `buf.gen.yaml` outputs (applied in ROD-22) | **RESOLVED** |
 | D-4 | Go SDK: embed vs import | Embed `transaction.pb.go` directly in `sdk/go/` | **RESOLVED** |
 

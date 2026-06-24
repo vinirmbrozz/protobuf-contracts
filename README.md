@@ -1,6 +1,6 @@
-# truther-contracts
+# protobuf-contracts
 
-[![CI](https://github.com/vinirmbrozz/truther-contracts/actions/workflows/buf-ci.yml/badge.svg)](https://github.com/vinirmbrozz/truther-contracts/actions/workflows/buf-ci.yml)
+[![CI](https://github.com/vinirmbrozz/protobuf-contracts/actions/workflows/buf-ci.yml/badge.svg)](https://github.com/vinirmbrozz/protobuf-contracts/actions/workflows/buf-ci.yml)
 
 > Repositório central de **contratos de dados**. O `.proto` é a **fonte única**: a partir dele
 > geramos uma **biblioteca (SDK) por linguagem** (Go, Node, Python). Qualquer serviço **importa o
@@ -40,8 +40,8 @@ flowchart TD
 
     subgraph ART["📦 Artefatos versionados"]
         SDKGO["sdk/go"]
-        SDKNODE["sdk/node (@truther/contracts)"]
-        SDKPY["sdk/python (truther_contracts)"]
+        SDKNODE["sdk/node (@protobuf/contracts)"]
+        SDKPY["sdk/python (protobuf_contracts)"]
         GEN["gen/ <i>(registro canônico)</i>"]
     end
 
@@ -184,8 +184,8 @@ tipado, para o adapter rotear à **DLQ**) se:
 
 ```go
 import (
-    serde "github.com/vinirmbrozz/truther-contracts/sdk/go"
-    txpb  "github.com/vinirmbrozz/truther-contracts/sdk/go/proto"
+    serde "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
+    txpb  "github.com/vinirmbrozz/protobuf-contracts/sdk/go/proto"
 )
 
 s, _ := serde.New()                              // lê SCHEMA_REGISTRY_URL
@@ -203,9 +203,9 @@ tx := msg.(*txpb.Transaction)
 ### Node / TypeScript
 
 ```ts
-import { TrutherSerde, Transaction } from '@truther/contracts';
+import { ProtobufSerde, Transaction } from '@protobuf/contracts';
 
-const serde = new TrutherSerde();                 // lê SCHEMA_REGISTRY_URL
+const serde = new ProtobufSerde();                 // lê SCHEMA_REGISTRY_URL
 await serde.bind('transactions', Transaction);    // resolve o schema_id
 
 const frame = serde.produce('transactions', Transaction.fromPartial({
@@ -219,8 +219,8 @@ const tx = await serde.consume('transactions', kafkaBytes); // SerdeError → DL
 ### Python
 
 ```python
-from truther_contracts import Transaction
-from truther_contracts.serde import KafkaSerde
+from protobuf_contracts import Transaction
+from protobuf_contracts.serde import KafkaSerde
 
 serde = KafkaSerde()                              # lê SCHEMA_REGISTRY_URL
 serde.bind("transactions", Transaction)           # resolve o schema_id

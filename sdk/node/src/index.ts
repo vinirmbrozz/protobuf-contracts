@@ -1,4 +1,4 @@
-export { TrutherSerde, SerdeError } from './serde';
+export { ProtobufSerde, SerdeError } from './serde';
 export type { SerdeErrorCode } from './serde';
 export { frameMessage, parseFrame, encodeMessageIndexes, MAGIC_BYTE, FrameError } from './framing';
 export type { ParsedFrame, FrameErrorCode } from './framing';

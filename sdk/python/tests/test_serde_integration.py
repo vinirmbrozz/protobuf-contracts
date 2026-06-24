@@ -11,8 +11,8 @@ import struct
 
 import pytest
 
-from truther_contracts import Transaction, PredictiveAnalyzer
-from truther_contracts.serde import KafkaSerde, SchemaForeignError, _encode_indexes
+from protobuf_contracts import Transaction, PredictiveAnalyzer
+from protobuf_contracts.serde import KafkaSerde, SchemaForeignError, _encode_indexes
 
 SR_URL = os.environ.get("SCHEMA_REGISTRY_URL")
 

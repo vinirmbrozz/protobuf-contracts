@@ -1,8 +1,8 @@
-# Truther Contracts SDK - Python
+# Protobuf Contracts SDK - Python
 
 ## Installation
 ```bash
-pip install git+https://github.com/vinirmbrozz/truther-contracts.git#subdirectory=gen/python
+pip install git+https://github.com/vinirmbrozz/protobuf-contracts.git#subdirectory=gen/python
 ```
 
 ## Usage

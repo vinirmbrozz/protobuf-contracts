@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="truther-contracts",
+    name="protobuf-contracts",
     version="1.0.0",
-    description="Python SDK for Truther Contracts",
+    description="Python SDK for Protobuf Contracts",
     author="vinirmbrozz",
     packages=find_packages(exclude=["tests*"]),
     install_requires=[

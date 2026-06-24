@@ -14,8 +14,8 @@ index 0 is the 1-byte 0x00 optimization; otherwise zig-zag varints (count, then
 each index). The index is derived natively from the message descriptor.
 
 Usage:
-  from truther_contracts import Transaction
-  from truther_contracts.serde import KafkaSerde
+  from protobuf_contracts import Transaction
+  from protobuf_contracts.serde import KafkaSerde
 
   serde = KafkaSerde()                       # reads SCHEMA_REGISTRY_URL
   serde.startup({"transactions": Transaction})  # resolves schema_ids

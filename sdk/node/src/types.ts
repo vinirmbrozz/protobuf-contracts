@@ -12,7 +12,7 @@ export interface MessageFns<T> {
   decode(input: Uint8Array): T;
 }
 
-/** Options for constructing TrutherSerde. */
+/** Options for constructing ProtobufSerde. */
 export interface SerdeOptions {
   /** Schema Registry URL. Falls back to SCHEMA_REGISTRY_URL, then localhost:8081. */
   srUrl?: string;

@@ -1,2 +1,2 @@
-recursive-include truther_contracts_sdk *.py
-include truther_contracts_sdk/*.py
+recursive-include protobuf_contracts_sdk *.py
+include protobuf_contracts_sdk/*.py

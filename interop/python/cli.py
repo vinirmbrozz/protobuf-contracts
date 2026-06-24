@@ -1,4 +1,4 @@
-"""Python side of the cross-language interop harness — uses the truther_contracts SDK.
+"""Python side of the cross-language interop harness — uses the protobuf_contracts SDK.
 
   python interop/python/cli.py produce <topic> <file>   # bind + produce → file
   python interop/python/cli.py consume <topic> <file>    # bind + consume + verify
@@ -9,8 +9,8 @@ SCHEMA_REGISTRY_URL from the environment.
 """
 import sys
 
-from truther_contracts import Transaction, PredictiveAnalyzer
-from truther_contracts.serde import KafkaSerde
+from protobuf_contracts import Transaction, PredictiveAnalyzer
+from protobuf_contracts.serde import KafkaSerde
 
 SAMPLE = Transaction(
     transactionAmount="499.99",
