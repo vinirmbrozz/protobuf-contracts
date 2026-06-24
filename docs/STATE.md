@@ -80,11 +80,18 @@ frágil. Discussão de design levou à **Decisão A** (registro fora da lib; SDK
   `Struct`); **protovalidate** portando os `Valid()` do Go (required, `amount_total>0` via CEL, `pix_key_type`
   defined_only). `go_package` com alias `;<domínio>v1`. `schemas.json` = topic→proto; o registrador
   **auto-descobre** as referências pelos `import` (resolve transitivo, ex.: `registration→address`, `validate→expression`).
-  **Falta:**
-  1. **Regerar no CI** (`generate.yml`) — `buf dep update` resolve o protovalidate; `buf breaking` vai acusar
-     (mock→real é breaking intencional; sem consumidores reais). Sintaxe protovalidate/v2 só valida no CI (buf não roda no Windows).
-  2. **Re-fiação do SDK** (depende do código regerado, agora em caminhos `protobuf/<domínio>/v1/`): re-exports
-     (`__init__.py`, `index.ts`), **testes** (referenciam tipos do mock), **interop** CLIs, exemplos do README.
+  **Re-fiação do SDK (pós-regen):**
+  - **Go** ✅ (na main): serde genérico; testes/interop nos pacotes versionados; `Transaction`=índice 0
+    (caminho variável coberto por `OnboardingCustomer`=índice 1). `go.mod`: `gen/go` requer o módulo Go do
+    protovalidate; `sdk/go`+`interop/go` `require`+`replace` `gen/go`. **Verificado local** (build+test+vet).
+  - **Node** ✅ (na main): `index.ts` re-exporta explícito (evita colisão de `protobufPackage`); testes/interop
+    idem. **Verificado local** (tsc + 15/15 jest).
+  - **Python** 🟡 (branch `chore/sdk-rewiring`, falta merge): SDK **self-contained** — `buf/validate/*_pb2.py`
+    gerado via `buf generate --include-imports` (`buf.gen.pyimports.yaml`), pois o `protovalidate` (pip) **não**
+    expõe `buf.validate`. Árvore gerada agora top-level (`sdk/python/{protobuf,buf}/`); `setup.py` usa
+    `find_namespace_packages`; `__init__.py` re-exporta. Verificação **no CI** (buf/protoc não rodam no Windows).
+  - **Falta ainda:** exemplos do README (mock antigo) + `docs/packaging.md` (layout `sdk/python`).
+- **`buf breaking`**: a troca mock→real é breaking **intencional** (sem consumidores reais) — esperado vermelho no PR.
 - **Renomear a marca "Truther" → "Protobuf"** — ✅ **feito** (este passo). Repo agora `protobuf-contracts`;
   pacotes `@protobuf/contracts` / `protobuf-contracts` / `protobuf_contracts`; package proto `protobuf.transaction`;
   módulo Go `github.com/vinirmbrozz/protobuf-contracts`. Código **gerado** (`gen/**`, `sdk/**/generated`,
