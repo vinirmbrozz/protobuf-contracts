@@ -13,30 +13,32 @@ import (
 	"os"
 
 	serde "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
-	txpb "github.com/vinirmbrozz/protobuf-contracts/sdk/go/proto"
+	txpb "github.com/vinirmbrozz/protobuf-contracts/sdk/go/protobuf/transaction/v1"
 )
 
+// sample is the canonical interop Transaction — keep byte-identical with the
+// Node and Python CLIs (scalar string fields only, so the wire bytes match).
 func sample() *txpb.Transaction {
 	return &txpb.Transaction{
-		TransactionAmount: "499.99",
-		FinalDecision:     "APPROVED",
-		PredictiveAnalyzer: &txpb.PredictiveAnalyzer{
-			IsAllowed:     true,
-			Reason:        "approved",
-			CardId:        "card-1",
-			UserId:        "user-1",
-			WalletAddress: "0xABC",
-			Allowance:     "1000.00",
-			TransactionId: "tx-1",
-			Name:          "n",
+		Transaction: &txpb.TransactionData{
+			Id:          "tx-1",
+			AmountTotal: "499.99",
+			Channel:     "web",
+			Type:        "PIX",
+		},
+		Customer: &txpb.Customer{
+			Name:  "Ada Lovelace",
+			Email: "ada@example.com",
 		},
 	}
 }
 
 func verify(tx *txpb.Transaction) error {
-	pa := tx.GetPredictiveAnalyzer()
-	if tx.GetTransactionAmount() != "499.99" || tx.GetFinalDecision() != "APPROVED" ||
-		pa == nil || !pa.GetIsAllowed() || pa.GetCardId() != "card-1" || pa.GetWalletAddress() != "0xABC" {
+	d := tx.GetTransaction()
+	c := tx.GetCustomer()
+	if d.GetId() != "tx-1" || d.GetAmountTotal() != "499.99" ||
+		d.GetChannel() != "web" || d.GetType() != "PIX" ||
+		c.GetName() != "Ada Lovelace" || c.GetEmail() != "ada@example.com" {
 		return fmt.Errorf("mismatch: %+v", tx)
 	}
 	return nil

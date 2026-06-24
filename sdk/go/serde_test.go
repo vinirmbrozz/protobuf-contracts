@@ -19,13 +19,13 @@ import (
 	"testing"
 
 	serde "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
-	txpb "github.com/vinirmbrozz/protobuf-contracts/sdk/go/proto"
+	obpb "github.com/vinirmbrozz/protobuf-contracts/sdk/go/protobuf/onboarding/v1"
+	txpb "github.com/vinirmbrozz/protobuf-contracts/sdk/go/protobuf/transaction/v1"
 	"google.golang.org/protobuf/proto"
 )
 
-// mockSR serves a read-only Confluent SR seeded with subject→id. idVersions is
-// the optional reverse view (id → subjects) used by the id-validation endpoint;
-// when nil it is derived from subjectID. idVersionCalls counts validation hits.
+// mockSR serves a read-only Confluent SR seeded with subject→id. idVersionCalls
+// counts hits on the id-validation endpoint (to assert caching).
 type mockSR struct {
 	*httptest.Server
 	idVersionCalls atomic.Int32
@@ -79,9 +79,13 @@ func newSerde(t *testing.T, m *mockSR) *serde.Serde {
 
 func sampleTx() *txpb.Transaction {
 	return &txpb.Transaction{
-		TransactionAmount:  "9.99",
-		FinalDecision:      "APPROVED",
-		PredictiveAnalyzer: &txpb.PredictiveAnalyzer{IsAllowed: true, Reason: "ok", CardId: "card-1"},
+		Transaction: &txpb.TransactionData{
+			Id:          "tx-1",
+			AmountTotal: "9.99",
+			Channel:     "web",
+			Type:        "PIX",
+		},
+		Customer: &txpb.Customer{Name: "Ada", Email: "ada@example.com"},
 	}
 }
 
@@ -95,8 +99,7 @@ func frame(id uint32, msgIndex, payload []byte) []byte {
 
 // ── Round-trip + envelope correctness ───────────────────────────────────────
 
-// Transaction is the 2nd message in the file (index 1) → exercises the
-// variable-length message-index path, NOT the 0x00 optimization.
+// Transaction is the 1st message in its file (index 0) → the 1-byte 0x00 path.
 func TestRoundTripTransaction(t *testing.T) {
 	m := newMockSR(t, map[string]int{"transactions-value": 42})
 	s := newSerde(t, m)
@@ -116,9 +119,9 @@ func TestRoundTripTransaction(t *testing.T) {
 	if id := binary.BigEndian.Uint32(framed[1:5]); id != 42 {
 		t.Errorf("schema_id: got %d want 42", id)
 	}
-	// index 1 → zig-zag varint(count=1)=0x02, varint(index=1)=0x02
-	if got := framed[5:7]; got[0] != 0x02 || got[1] != 0x02 {
-		t.Errorf("msg-index: got % x want 02 02", got)
+	// index 0 → single 0x00 byte; payload starts at offset 6.
+	if framed[5] != 0x00 {
+		t.Errorf("msg-index byte: got 0x%02x want 0x00", framed[5])
 	}
 
 	got, err := s.Consume("transactions", framed)
@@ -130,24 +133,31 @@ func TestRoundTripTransaction(t *testing.T) {
 	}
 }
 
-// PredictiveAnalyzer is the 1st message (index 0) → the single-byte 0x00 path.
-func TestRoundTripIndexZero(t *testing.T) {
-	m := newMockSR(t, map[string]int{"predictions-value": 7})
+// OnboardingCustomer is the 2nd message in onboarding.proto (index 1) → exercises
+// the variable-length message-index path, NOT the 0x00 optimization.
+func TestRoundTripVariableIndex(t *testing.T) {
+	m := newMockSR(t, map[string]int{"cust-value": 7})
 	s := newSerde(t, m)
-	if err := s.Bind("predictions", &txpb.PredictiveAnalyzer{}); err != nil {
+	if err := s.Bind("cust", &obpb.OnboardingCustomer{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 
-	framed, err := s.Produce("predictions", &txpb.PredictiveAnalyzer{IsAllowed: true})
+	original := &obpb.OnboardingCustomer{Id: "c-1"}
+	framed, err := s.Produce("cust", original)
 	if err != nil {
 		t.Fatalf("Produce: %v", err)
 	}
-	// index 0 → single 0x00 byte, payload starts at offset 6
-	if framed[5] != 0x00 {
-		t.Errorf("msg-index byte: got 0x%02x want 0x00", framed[5])
+	// index 1 → zig-zag varint(count=1)=0x02, varint(index=1)=0x02
+	if got := framed[5:7]; got[0] != 0x02 || got[1] != 0x02 {
+		t.Errorf("msg-index: got % x want 02 02", got)
 	}
-	if _, err := s.Consume("predictions", framed); err != nil {
+
+	got, err := s.Consume("cust", framed)
+	if err != nil {
 		t.Fatalf("Consume: %v", err)
+	}
+	if !proto.Equal(original, got) {
+		t.Errorf("roundtrip mismatch: got %v", got)
 	}
 }
 
@@ -167,7 +177,7 @@ func TestProduceConsumeUnbound(t *testing.T) {
 	if _, err := s.Produce("transactions", sampleTx()); !errors.Is(err, serde.ErrTopicNotBound) {
 		t.Errorf("Produce unbound: want ErrTopicNotBound, got %v", err)
 	}
-	if _, err := s.Consume("transactions", []byte{0x00, 0, 0, 0, 42, 0x02, 0x02, 0x00}); !errors.Is(err, serde.ErrTopicNotBound) {
+	if _, err := s.Consume("transactions", []byte{0x00, 0, 0, 0, 42, 0x00, 0x0a}); !errors.Is(err, serde.ErrTopicNotBound) {
 		t.Errorf("Consume unbound: want ErrTopicNotBound, got %v", err)
 	}
 }
@@ -179,7 +189,7 @@ func TestConsumeInvalidMagicByte(t *testing.T) {
 	s := newSerde(t, m)
 	_ = s.Bind("transactions", &txpb.Transaction{})
 
-	bad := []byte{0x01, 0x00, 0x00, 0x00, 0x2a, 0x02, 0x02, 0x0a}
+	bad := []byte{0x01, 0x00, 0x00, 0x00, 0x2a, 0x00, 0x0a}
 	if _, err := s.Consume("transactions", bad); !errors.Is(err, serde.ErrInvalidMagicByte) {
 		t.Errorf("want ErrInvalidMagicByte, got %v", err)
 	}
@@ -208,7 +218,7 @@ func TestConsumeForeignSubjectID(t *testing.T) {
 	_ = s.Bind("transactions", &txpb.Transaction{})
 
 	payload, _ := proto.Marshal(sampleTx())
-	bad := frame(99, []byte{0x02, 0x02}, payload) // valid envelope, wrong subject's id
+	bad := frame(99, []byte{0x00}, payload) // valid envelope, wrong subject's id
 	if _, err := s.Consume("transactions", bad); !errors.Is(err, serde.ErrSchemaForeign) {
 		t.Errorf("want ErrSchemaForeign, got %v", err)
 	}
@@ -220,7 +230,7 @@ func TestConsumeUnknownID(t *testing.T) {
 	_ = s.Bind("transactions", &txpb.Transaction{})
 
 	payload, _ := proto.Marshal(sampleTx())
-	bad := frame(12345, []byte{0x02, 0x02}, payload) // id never registered (404)
+	bad := frame(12345, []byte{0x00}, payload) // id never registered (404)
 	if _, err := s.Consume("transactions", bad); !errors.Is(err, serde.ErrSchemaForeign) {
 		t.Errorf("want ErrSchemaForeign, got %v", err)
 	}
@@ -229,10 +239,10 @@ func TestConsumeUnknownID(t *testing.T) {
 func TestConsumeMessageIndexMismatch(t *testing.T) {
 	m := newMockSR(t, map[string]int{"transactions-value": 42})
 	s := newSerde(t, m)
-	_ = s.Bind("transactions", &txpb.Transaction{}) // expects index 1
+	_ = s.Bind("transactions", &txpb.Transaction{}) // expects index 0
 
 	payload, _ := proto.Marshal(sampleTx())
-	bad := frame(42, []byte{0x00}, payload) // index 0, but bound type is index 1
+	bad := frame(42, []byte{0x02, 0x02}, payload) // index 1, but bound type is index 0
 	if _, err := s.Consume("transactions", bad); !errors.Is(err, serde.ErrMessageIndexMismatch) {
 		t.Errorf("want ErrMessageIndexMismatch, got %v", err)
 	}
@@ -243,7 +253,7 @@ func TestConsumeInvalidPayload(t *testing.T) {
 	s := newSerde(t, m)
 	_ = s.Bind("transactions", &txpb.Transaction{})
 
-	bad := frame(42, []byte{0x02, 0x02}, []byte{0xFF, 0xFF, 0xFF}) // invalid proto wire
+	bad := frame(42, []byte{0x00}, []byte{0xFF, 0xFF, 0xFF}) // valid header, invalid proto wire
 	if _, err := s.Consume("transactions", bad); !errors.Is(err, serde.ErrDeserialize) {
 		t.Errorf("want ErrDeserialize, got %v", err)
 	}
@@ -277,11 +287,11 @@ func TestNewFailsWithoutSRURL(t *testing.T) {
 }
 
 func TestStartupBindsAll(t *testing.T) {
-	m := newMockSR(t, map[string]int{"transactions-value": 42, "predictions-value": 7})
+	m := newMockSR(t, map[string]int{"transactions-value": 42, "cust-value": 7})
 	s := newSerde(t, m)
 	err := s.Startup(map[string]proto.Message{
 		"transactions": &txpb.Transaction{},
-		"predictions":  &txpb.PredictiveAnalyzer{},
+		"cust":         &obpb.OnboardingCustomer{},
 	})
 	if err != nil {
 		t.Fatalf("Startup: %v", err)
@@ -289,7 +299,7 @@ func TestStartupBindsAll(t *testing.T) {
 	if _, err := s.Produce("transactions", sampleTx()); err != nil {
 		t.Errorf("Produce transactions: %v", err)
 	}
-	if _, err := s.Produce("predictions", &txpb.PredictiveAnalyzer{}); err != nil {
-		t.Errorf("Produce predictions: %v", err)
+	if _, err := s.Produce("cust", &obpb.OnboardingCustomer{Id: "c-1"}); err != nil {
+		t.Errorf("Produce cust: %v", err)
 	}
 }

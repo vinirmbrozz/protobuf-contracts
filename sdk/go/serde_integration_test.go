@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	serde "github.com/vinirmbrozz/protobuf-contracts/sdk/go"
-	txpb "github.com/vinirmbrozz/protobuf-contracts/sdk/go/proto"
+	txpb "github.com/vinirmbrozz/protobuf-contracts/sdk/go/protobuf/transaction/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -51,7 +51,7 @@ func TestIntegrationRealSR(t *testing.T) {
 
 	// Negative: a schema_id that does not exist in the real SR must be rejected.
 	payload, _ := proto.Marshal(original)
-	bogus := frame(987654, []byte{0x02, 0x02}, payload)
+	bogus := frame(987654, []byte{0x00}, payload)
 	if _, err := s.Consume("transactions", bogus); !errors.Is(err, serde.ErrSchemaForeign) {
 		t.Errorf("bogus id against real SR: want ErrSchemaForeign, got %v", err)
 	}

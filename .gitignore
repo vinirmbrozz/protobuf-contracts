@@ -24,3 +24,6 @@ __pycache__/
 
 # Legacy gen/python package layout — replaced by gen/python/proto/ (ROD-26)
 gen/python/protobuf_contracts_sdk/
+# Go build artifacts
+interop/go/go.exe
+*.exe
