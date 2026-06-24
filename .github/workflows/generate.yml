@@ -30,9 +30,7 @@ jobs:
       - uses: bufbuild/buf-action@v1
         with:
           version: '1.70.0'
-          lint: false
-          breaking: false
-          push: false
+          setup_only: true
 
       # protoc — needed by buf's built-in `name: python` plugin (calls protoc --python_out).
       - name: Install protoc
@@ -49,6 +47,10 @@ jobs:
         run: |
           npm install
           echo "$(npm root)/.bin" >> $GITHUB_PATH
+
+      # Resolve remote deps (protovalidate) — writes buf.lock and downloads modules.
+      - name: Resolve buf deps
+        run: buf dep update
 
       # Single source of truth: buf.gen.yaml drives all code generation.
       - name: Run buf generate
@@ -73,4 +75,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(gen): regenerar via buf [skip ci]"
-          file_pattern: gen sdk
+          file_pattern: gen sdk buf.lock
