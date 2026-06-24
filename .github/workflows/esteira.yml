@@ -1,0 +1,36 @@
+name: esteira — gates SDD
+
+# Aditivo ao buf-ci/generate: só valida a camada SDD (docs/specs/skills).
+on:
+  push:
+    paths:
+      - 'CLAUDE.md'
+      - 'docs/**'
+      - 'specs/**'
+      - '.claude/**'
+      - 'scripts/audit-esteira.mjs'
+      - 'scripts/eval-spec-fidelity.mjs'
+      - '.github/workflows/esteira.yml'
+  pull_request:
+    paths:
+      - 'CLAUDE.md'
+      - 'docs/**'
+      - 'specs/**'
+      - '.claude/**'
+      - 'scripts/audit-esteira.mjs'
+      - 'scripts/eval-spec-fidelity.mjs'
+      - '.github/workflows/esteira.yml'
+
+jobs:
+  esteira:
+    name: audit + eval (SDD)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Auditoria da esteira (frontmatter, links, specs)
+        run: node scripts/audit-esteira.mjs .
+      - name: Eval de fidelidade spec→implementação
+        run: node scripts/eval-spec-fidelity.mjs .

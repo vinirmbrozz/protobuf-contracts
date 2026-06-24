@@ -1,8 +1,13 @@
-# MEMORY — truther-contracts (continuidade)
+---
+name: STATE
+description: Memória de trabalho (continuidade) do protobuf-contracts — estado atual, próximo passo, decisões e jornada. Contexto base, leia ao retomar.
+alwaysApply: true
+---
 
-> Documento de **memória/continuidade** do projeto: estado atual, decisões e a jornada de como
-> chegamos aqui. Para a apresentação do projeto, ver o [`README.md`](../README.md); para o contrato
-> de wire format, o [`docs/confluent-sr-serde-spec.md`](confluent-sr-serde-spec.md).
+# STATE — protobuf-contracts (continuidade)
+
+> **Memória volátil** (estado/próximo passo). Decisão durável vai pra ADR (`docs/architecture/adr/`).
+> Apresentação: [`README.md`](../README.md) · wire format: [`docs/confluent-sr-serde-spec.md`](confluent-sr-serde-spec.md).
 
 ## 1. O que é
 Repositório central de **contratos de dados**. O `.proto` é a **fonte única**: dele geramos uma
