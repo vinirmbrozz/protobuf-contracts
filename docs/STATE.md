@@ -70,10 +70,20 @@ frágil. Discussão de design levou à **Decisão A** (registro fora da lib; SDK
   remetente — camadas futuras: broker-side validation, ACL/TLS).
 
 ## 6. Pendências
-- 🔴 **URGENTE — protos reais a partir do `data-rudder-provider`.** O `proto/transaction.proto` atual
-  é **mock descartável** (seed). Criar dois contratos reais: `transaction.proto` e `onboarding.proto`,
-  **equivalentes às rotas homônimas** do projeto `C:\Users\mbroz\OneDrive\Documentos\Truther\data-rudder-provider`.
-  Depois: regerar SDKs (CI), atualizar `scripts/schemas.json` (topic→proto) e o registrador.
+- 🟡 **EM ANDAMENTO — protos reais a partir do `data-rudder-provider`.** Mock descartado. **Feito:**
+  `proto/shared.proto` (PixKeyType, Address, RegistrationData, BankingData), `proto/transaction.proto`
+  (Transaction = `CreateTransactionReq`: device/transaction/credit_card/boleto/order/pos/customer/extra_data)
+  e `proto/onboarding.proto` (`CreateOnboardingReq`). Decisões: só evento de criação; idiomático
+  (dinheiro=string decimal, enums `_UNSPECIFIED=0`, `Timestamp`, `Struct`); `shared.proto` importado por
+  ambos. **Validações via protovalidate** portando os `Valid()` do Go (required, `amount_total>0` via CEL,
+  enum `pix_key_type` defined_only). `scripts/schemas.json` reestruturado (libraries+topics+references) e
+  `register_schemas.py` agora é **reference-aware**. **Falta:**
+  1. **Vendorizar `buf/validate/validate.proto`** (`buf export buf.build/bufbuild/protovalidate -o vendor/protovalidate`,
+     roda no CI) — o registrador precisa dele p/ registrar os schemas com protovalidate (referência no SR).
+  2. **Regerar no CI** (`generate.yml`) — ⚠️ `buf breaking` vai acusar (substituição do mock é breaking
+     intencional; sem consumidores reais ainda). Validar a sintaxe protovalidate só roda no CI (buf não roda no Windows).
+  3. **Re-fiação do SDK** (depende do código regerado): re-exports (`__init__.py`, `index.ts`), **testes**
+     (referenciam `PredictiveAnalyzer`/campos do mock), **interop** CLIs, exemplos do README.
 - **Renomear a marca "Truther" → "Protobuf"** — ✅ **feito** (este passo). Repo agora `protobuf-contracts`;
   pacotes `@protobuf/contracts` / `protobuf-contracts` / `protobuf_contracts`; package proto `protobuf.transaction`;
   módulo Go `github.com/vinirmbrozz/protobuf-contracts`. Código **gerado** (`gen/**`, `sdk/**/generated`,
