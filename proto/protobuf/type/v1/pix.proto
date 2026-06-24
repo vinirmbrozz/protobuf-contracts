@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package protobuf.type.v1;
+
+option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/protobuf/type/v1;typev1";
+
+// PixKeyType — valid Pix key types. DataRudder validated the raw string against
+// this set (CPF, CNPJ, EMAIL, PHONE, RANDOM).
+enum PixKeyType {
+  PIX_KEY_TYPE_UNSPECIFIED = 0;
+  PIX_KEY_TYPE_CPF = 1;
+  PIX_KEY_TYPE_CNPJ = 2;
+  PIX_KEY_TYPE_EMAIL = 3;
+  PIX_KEY_TYPE_PHONE = 4;
+  PIX_KEY_TYPE_RANDOM = 5;
+}

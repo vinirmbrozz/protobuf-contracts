@@ -1,22 +1,16 @@
-version: v1
-name: buf.build/protobuf/contracts
-build:
-  excludes:
-    - node_modules
+version: v2
+# The buf module roots at proto/, so a file's directory path equals its package
+# (e.g. proto/protobuf/transaction/v1 -> package protobuf.transaction.v1). With
+# that + version suffixes, the full STANDARD lint set passes with no exceptions.
+modules:
+  - path: proto
+    name: buf.build/protobuf/contracts
 deps:
   - buf.build/bufbuild/protovalidate
 lint:
   use:
-    - DEFAULT
-  except:
-    # We don't suffix packages with a version number (v1, v2) until the first breaking change.
-    - PACKAGE_VERSION_SUFFIX
-    # The contracts live at proto/ (root), not proto/protobuf/<domain>/. A directory
-    # reorg is deferred (it would move gen/ paths). Re-enable PACKAGE_DIRECTORY_MATCH
-    # when the reorg is done in a coordinated migration.
-    - PACKAGE_DIRECTORY_MATCH
+    - STANDARD
   enum_zero_value_suffix: _UNSPECIFIED
 breaking:
   use:
     - FILE
-  ignore_unstable_packages: false

@@ -3,13 +3,15 @@ syntax = "proto3";
 // Onboarding contract — mirrors POST /api/v1/fraud/onboarding/
 // (CreateOnboardingReq) in data-rudder-provider. In the source, customer.id is
 // the only required field. Field-level rules port CreateOnboardingReq.Valid().
-package protobuf.onboarding;
+package protobuf.onboarding.v1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
-import "proto/shared.proto";
+import "protobuf/type/v1/banking.proto";
+import "protobuf/type/v1/pix.proto";
+import "protobuf/type/v1/registration.proto";
 
-option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/onboarding";
+option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/protobuf/onboarding/v1;onboardingv1";
 
 // Onboarding is the create-onboarding payload (the Kafka event).
 message Onboarding {
@@ -21,9 +23,9 @@ message Onboarding {
 // registration/banking + pix keys), but here id is required.
 message OnboardingCustomer {
   string id = 1 [(buf.validate.field).string.min_len = 1];
-  protobuf.shared.RegistrationData registration_data = 2;
-  protobuf.shared.BankingData banking_data = 3;
+  protobuf.type.v1.RegistrationData registration_data = 2;
+  protobuf.type.v1.BankingData banking_data = 3;
   repeated string pix_key = 4;
-  repeated protobuf.shared.PixKeyType pix_key_type = 5
+  repeated protobuf.type.v1.PixKeyType pix_key_type = 5
       [(buf.validate.field).repeated.items.enum.defined_only = true];
 }

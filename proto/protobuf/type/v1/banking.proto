@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package protobuf.type.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/protobuf/type/v1;typev1";
+
+message BankingData {
+  string account_type = 1;
+  string institution_name = 2;
+  string bank_code = 3;
+  string branch_code = 4;
+  string branch_name = 5;
+  string account_id = 6;
+  string country = 7;
+  google.protobuf.Timestamp account_create_date = 8;
+  google.protobuf.Timestamp account_last_update_date = 9;
+}

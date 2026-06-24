@@ -4,15 +4,18 @@ syntax = "proto3";
 // (CreateTransactionReq) in data-rudder-provider: the event submitted for fraud
 // analysis. Conventions: money is a decimal string (never float); fixed-value
 // fields are enums; instants use google.protobuf.Timestamp; free-form payloads
-// use google.protobuf.Struct. Field-level rules port the Go CreateTransactionReq.Valid().
-package protobuf.transaction;
+// use google.protobuf.Struct. Field-level rules port CreateTransactionReq.Valid().
+package protobuf.transaction.v1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
-import "proto/shared.proto";
+import "protobuf/type/v1/address.proto";
+import "protobuf/type/v1/banking.proto";
+import "protobuf/type/v1/pix.proto";
+import "protobuf/type/v1/registration.proto";
 
-option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/transaction";
+option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/protobuf/transaction/v1;transactionv1";
 
 // Transaction is the full create-transaction payload (the Kafka event).
 message Transaction {
@@ -60,10 +63,10 @@ message TransactionData {
 
 message Party {
   string id = 1;
-  protobuf.shared.RegistrationData registration_data = 2;
-  protobuf.shared.BankingData banking_data = 3;
+  protobuf.type.v1.RegistrationData registration_data = 2;
+  protobuf.type.v1.BankingData banking_data = 3;
   repeated string pix_key = 4;
-  repeated protobuf.shared.PixKeyType pix_key_type = 5
+  repeated protobuf.type.v1.PixKeyType pix_key_type = 5
       [(buf.validate.field).repeated.items.enum.defined_only = true];
 }
 
@@ -122,7 +125,7 @@ message Delivery {
 message Pos {
   string id = 1;
   string name = 2;
-  protobuf.shared.Address address = 3;
+  protobuf.type.v1.Address address = 3;
 }
 
 message Customer {
@@ -134,5 +137,5 @@ message Customer {
   string doc_type = 6;
   string doc = 7;
   string id = 8;
-  protobuf.shared.Address address = 9;
+  protobuf.type.v1.Address address = 9;
 }

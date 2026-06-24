@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package protobuf.type.v1;
+
+option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/protobuf/type/v1;typev1";
+
+message Address {
+  string zip_code = 1;
+  string city = 2;
+  string street_name = 3;
+  string street_number = 4;
+  string complement = 5;
+  string state = 6;
+  string country = 7;
+}

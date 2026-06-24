@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package protobuf.type.v1;
+
+import "google/protobuf/timestamp.proto";
+import "protobuf/type/v1/address.proto";
+
+option go_package = "github.com/vinirmbrozz/protobuf-contracts/gen/go/protobuf/type/v1;typev1";
+
+message RegistrationData {
+  string name = 1;
+  string email = 2;
+  google.protobuf.Timestamp datetime_account_create = 3;
+  string phone_number = 4;
+  string birthdate = 5;  // date-only (YYYY-MM-DD) in source; kept as string
+  string doc_type = 6;
+  string doc = 7;
+  Address address = 8;
+}
