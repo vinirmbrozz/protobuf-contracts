@@ -28,3 +28,6 @@ gen/python/protobuf_contracts_sdk/
 interop/go/go.exe
 *.exe
 build/
+
+# Obsidian
+.obsidian/
